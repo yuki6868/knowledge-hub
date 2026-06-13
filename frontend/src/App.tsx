@@ -6,7 +6,8 @@ import {
   SITE_TYPES,
 } from './constants/knowledge'
 import { mockCards } from './data/mockCards'
-import type { CardHistory, CardStatus, CardWithTags, Conflict, SiteType, Tag } from './types/knowledge'
+import type { CardHistory, CardStatus, CardWithTags, Conflict, RelatedCardReason, SiteType, Tag } from './types/knowledge'
+import { getRelatedCards } from './utils/relatedCards'
 import './App.css'
 
 type StatusFilter = CardStatus | 'all'
@@ -60,6 +61,14 @@ const EMPTY_FORM: CardFormState = {
   site: 'other',
   status: 'inbox',
   tagsText: '',
+}
+
+
+const RELATED_REASON_LABELS: Record<RelatedCardReason, string> = {
+  tag: 'タグ一致',
+  site: 'サイト一致',
+  title: 'タイトル一致',
+  body: '本文一致',
 }
 
 const INITIAL_SYNC_STATE: SyncState = {
@@ -192,6 +201,10 @@ function App() {
       .filter((history) => history.card_id === selectedCardId)
       .sort((a, b) => b.saved_at.localeCompare(a.saved_at))
   }, [cardHistories, selectedCardId])
+
+  const relatedCards = useMemo(() => {
+    return getRelatedCards(selectedCard, cards, 5)
+  }, [cards, selectedCard])
 
   const unresolvedConflicts = useMemo(() => {
     return conflicts
@@ -398,6 +411,14 @@ function App() {
     setEditorMode('edit')
     setSelectedCardId(card.id)
     setForm(toFormState(card))
+  }
+
+  const jumpToRelatedCard = (card: CardWithTags) => {
+    setShowTrash(false)
+    setStatusFilter('all')
+    setTagFilter('all')
+    setSiteFilter('all')
+    selectCard(card)
   }
 
   const selectSite = (site: SiteFilter) => {
@@ -1221,6 +1242,45 @@ function App() {
               </button>
             ) : null}
           </div>
+
+          <section className="related-panel" aria-label="関連カード">
+            <div className="related-header">
+              <div>
+                <p className="eyebrow">Related Cards</p>
+                <h3>関連カード</h3>
+              </div>
+              <span>{relatedCards.length}件</span>
+            </div>
+
+            {editorMode === 'new' ? (
+              <p className="related-empty">新規カードは保存後に関連カードを表示します。</p>
+            ) : relatedCards.length === 0 ? (
+              <p className="related-empty">タグ・サイト・タイトル・本文単語が近いカードはまだありません。</p>
+            ) : (
+              <div className="related-list">
+                {relatedCards.map((card) => (
+                  <button
+                    className="related-item"
+                    key={card.id}
+                    type="button"
+                    onClick={() => jumpToRelatedCard(card)}
+                  >
+                    <div className="related-item-main">
+                      <strong>{card.title || '無題のカード'}</strong>
+                      <span>{SITE_TYPE_LABELS[card.site]}</span>
+                    </div>
+                    <p>{getPreview(card.body)}</p>
+                    <div className="related-meta">
+                      <b>{card.score}点</b>
+                      {card.reasons.map((reason) => (
+                        <em key={reason}>{RELATED_REASON_LABELS[reason]}</em>
+                      ))}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
 
           <section className="history-panel" aria-label="編集履歴">
             <div className="history-header">
