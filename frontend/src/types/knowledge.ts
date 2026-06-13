@@ -27,6 +27,7 @@ export type Card = {
   created_at: ISODateTimeString
   updated_at: ISODateTimeString
   device_id: string | null
+  deleted_at?: ISODateTimeString | null
 }
 
 export type NewCardInput = {

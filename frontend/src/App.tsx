@@ -1,4 +1,4 @@
-import { useMemo, useState, type DragEvent, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useState, type DragEvent, type KeyboardEvent } from 'react'
 import {
   ARTICLE_BOARD_STATUSES,
   CARD_STATUS_LABELS,
@@ -11,6 +11,8 @@ import type { CardHistory, CardStatus, CardWithTags, Conflict, RelatedCardReason
 import { getRelatedCards } from './utils/relatedCards'
 import { downloadCardAsJson, downloadCardsAsJsonBundle } from './utils/jsonExport'
 import { downloadCardAsMarkdown, downloadCardsAsMarkdownBundle } from './utils/markdownExport'
+import { isSupabaseConfigured } from './lib/supabase'
+import { fetchCardsFromSupabase, pushCardsToSupabase } from './services/supabaseCards'
 import './App.css'
 
 type StatusFilter = CardStatus | 'all'
@@ -18,7 +20,7 @@ type SiteFilter = SiteType | 'all'
 type TagFilter = string | 'all'
 type TagSortMode = 'count' | 'name'
 type EditorMode = 'new' | 'edit'
-type SyncStatus = 'synced' | 'pending' | 'conflict'
+type SyncStatus = 'synced' | 'pending' | 'conflict' | 'syncing'
 
 type SyncState = {
   status: SyncStatus
@@ -130,6 +132,16 @@ function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+function getOrCreateDeviceId(): string {
+  const storageKey = 'knowledge-hub-device-id'
+  const current = window.localStorage.getItem(storageKey)
+  if (current) return current
+
+  const next = `device-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  window.localStorage.setItem(storageKey, next)
+  return next
+}
+
 function normalizeTagName(value: string): string {
   return value.trim().replace(/^#/, '').toLowerCase()
 }
@@ -197,7 +209,12 @@ function App() {
   const [quickMemoBody, setQuickMemoBody] = useState('')
   const [draggingArticleCardId, setDraggingArticleCardId] = useState<string | null>(null)
   const [dragOverArticleStatus, setDragOverArticleStatus] = useState<CardStatus | null>(null)
-  const [syncState, setSyncState] = useState<SyncState>(INITIAL_SYNC_STATE)
+  const [syncState, setSyncState] = useState<SyncState>(() => ({
+    ...INITIAL_SYNC_STATE,
+    deviceId: getOrCreateDeviceId(),
+  }))
+  const [syncMessage, setSyncMessage] = useState<string | null>(null)
+  const [syncError, setSyncError] = useState<string | null>(null)
 
   const selectedCard = useMemo(() => {
     return cards.find((card) => card.id === selectedCardId) ?? null
@@ -230,6 +247,17 @@ function App() {
     return cards.find((card) => card.id === selectedConflict.card_id) ?? null
   }, [cards, selectedConflict])
 
+  useEffect(() => {
+    if (!syncMessage && !syncError) return
+
+    const timerId = window.setTimeout(() => {
+      setSyncMessage(null)
+      setSyncError(null)
+    }, 6000)
+
+    return () => window.clearTimeout(timerId)
+  }, [syncError, syncMessage])
+
   const markLocalChange = () => {
     setSyncState((current) => ({
       ...current,
@@ -247,6 +275,62 @@ function App() {
       conflictCount: unresolvedConflicts.length,
       lastSyncedAt: new Date().toISOString(),
     }))
+  }
+
+  const loadFromSupabase = async () => {
+    setSyncError(null)
+    setSyncMessage(null)
+    setSyncState((current) => ({ ...current, status: 'syncing' }))
+
+    try {
+      const remoteCards = await fetchCardsFromSupabase()
+      setCards(remoteCards)
+      setSelectedCardId(null)
+      setShowDetail(false)
+      setShowTrash(false)
+      setShowArticleBoard(false)
+      setExportCardIds([])
+      setSyncState((current) => ({
+        ...current,
+        status: unresolvedConflicts.length > 0 ? 'conflict' : 'synced',
+        pendingCount: 0,
+        conflictCount: unresolvedConflicts.length,
+        lastSyncedAt: new Date().toISOString(),
+      }))
+      setSyncMessage(`Supabaseから${remoteCards.length}件読み込みました。`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Supabaseからの読み込みに失敗しました。'
+      setSyncError(message)
+      setSyncState((current) => ({
+        ...current,
+        status: unresolvedConflicts.length > 0 ? 'conflict' : current.pendingCount > 0 ? 'pending' : 'synced',
+      }))
+    }
+  }
+
+  const syncToSupabase = async () => {
+    setSyncError(null)
+    setSyncMessage(null)
+    setSyncState((current) => ({ ...current, status: 'syncing' }))
+
+    try {
+      await pushCardsToSupabase(cards)
+      setSyncState((current) => ({
+        ...current,
+        status: unresolvedConflicts.length > 0 ? 'conflict' : 'synced',
+        pendingCount: 0,
+        conflictCount: unresolvedConflicts.length,
+        lastSyncedAt: new Date().toISOString(),
+      }))
+      setSyncMessage(`Supabaseへ${cards.length}件同期しました。`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Supabaseへの同期に失敗しました。'
+      setSyncError(message)
+      setSyncState((current) => ({
+        ...current,
+        status: unresolvedConflicts.length > 0 ? 'conflict' : 'pending',
+      }))
+    }
   }
 
   const simulateConflict = () => {
@@ -460,13 +544,23 @@ function App() {
   const trashCount = trashCards.length
   const totalTagCount = allTags.length
   const syncStatusLabel =
-    unresolvedConflicts.length > 0 ? '競合あり' : syncState.status === 'synced' ? '同期済み' : '未同期あり'
+    unresolvedConflicts.length > 0
+      ? '競合あり'
+      : syncState.status === 'syncing'
+        ? '同期中'
+        : syncState.status === 'synced'
+          ? '同期済み'
+          : '未同期あり'
   const syncStatusDescription =
     unresolvedConflicts.length > 0
       ? '別端末更新との衝突があります。下の競合管理で採用する内容を選びます。'
-      : syncState.status === 'synced'
-        ? 'ローカル変更はすべて同期済みです。'
-        : 'ローカル変更があります。Supabase接続後はここから同期します。'
+      : !isSupabaseConfigured
+        ? 'Supabase未設定です。.env.local に URL と anon key を設定すると同期できます。'
+        : syncState.status === 'syncing'
+          ? 'Supabaseと通信しています。'
+          : syncState.status === 'synced'
+            ? 'ローカル変更はすべて同期済みです。'
+            : 'ローカル変更があります。Supabaseへ手動同期できます。'
 
   const openQuickMemo = () => {
     setQuickMemoTitle('')
@@ -493,7 +587,7 @@ function App() {
       status: 'inbox',
       created_at: now,
       updated_at: now,
-      device_id: 'local-dev',
+      device_id: syncState.deviceId,
       tags: [],
     }
 
@@ -622,7 +716,7 @@ function App() {
         status: form.status,
         created_at: now,
         updated_at: now,
-        device_id: 'local-dev',
+        device_id: syncState.deviceId,
         tags: nextTags,
       }
 
@@ -1520,10 +1614,31 @@ function App() {
             <span>端末ID</span>
             <strong>{syncState.deviceId}</strong>
           </div>
+          <div>
+            <span>Supabase</span>
+            <strong>{isSupabaseConfigured ? '設定済み' : '未設定'}</strong>
+          </div>
         </div>
 
+        {syncMessage ? <p className="sync-message">{syncMessage}</p> : null}
+        {syncError ? <p className="sync-error">{syncError}</p> : null}
+
         <div className="sync-actions">
-          <button type="button" onClick={markSynced} disabled={syncState.pendingCount === 0}>
+          <button
+            type="button"
+            onClick={loadFromSupabase}
+            disabled={!isSupabaseConfigured || syncState.status === 'syncing'}
+          >
+            Supabaseから読込
+          </button>
+          <button
+            type="button"
+            onClick={syncToSupabase}
+            disabled={!isSupabaseConfigured || syncState.status === 'syncing'}
+          >
+            Supabaseへ同期
+          </button>
+          <button type="button" onClick={markSynced} disabled={syncState.pendingCount === 0 || syncState.status === 'syncing'}>
             同期済みにする
           </button>
           <button type="button" onClick={simulateConflict}>

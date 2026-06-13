@@ -21,6 +21,7 @@ export type Database = {
           created_at: string
           updated_at: string
           device_id: string | null
+          deleted_at: string | null
         }
         Insert: {
           id?: string
@@ -31,6 +32,7 @@ export type Database = {
           created_at?: string
           updated_at?: string
           device_id?: string | null
+          deleted_at?: string | null
         }
         Update: {
           id?: string
@@ -41,7 +43,9 @@ export type Database = {
           created_at?: string
           updated_at?: string
           device_id?: string | null
+          deleted_at?: string | null
         }
+        Relationships: []
       }
       tags: {
         Row: {
@@ -59,6 +63,7 @@ export type Database = {
           name?: string
           created_at?: string
         }
+        Relationships: []
       }
       card_tags: {
         Row: {
@@ -73,6 +78,7 @@ export type Database = {
           card_id?: string
           tag_id?: string
         }
+        Relationships: []
       }
       card_histories: {
         Row: {
@@ -96,6 +102,7 @@ export type Database = {
           body?: string
           saved_at?: string
         }
+        Relationships: []
       }
       conflicts: {
         Row: {
@@ -128,6 +135,7 @@ export type Database = {
           created_at?: string
           resolved?: boolean
         }
+        Relationships: []
       }
     }
     Views: Record<string, never>
