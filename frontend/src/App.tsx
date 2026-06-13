@@ -11,6 +11,8 @@ import './App.css'
 
 type StatusFilter = CardStatus | 'all'
 type SiteFilter = SiteType | 'all'
+type TagFilter = string | 'all'
+type TagSortMode = 'count' | 'name'
 type EditorMode = 'new' | 'edit'
 
 type CardFormState = {
@@ -64,6 +66,14 @@ function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+function normalizeTagName(value: string): string {
+  return value.trim().replace(/^#/, '').toLowerCase()
+}
+
+function hasTag(card: CardWithTags, tagName: string): boolean {
+  return card.tags.some((tag) => tag.name === tagName)
+}
+
 function parseTags(tagsText: string): Tag[] {
   const now = new Date().toISOString()
 
@@ -71,8 +81,9 @@ function parseTags(tagsText: string): Tag[] {
     new Set(
       tagsText
         .split(',')
-        .map((tag) => tag.trim().replace(/^#/, ''))
-        .filter(Boolean),
+        .map(normalizeTagName)
+        .filter(Boolean)
+        .sort(),
     ),
   ).map((name) => ({
     id: createId('tag'),
@@ -96,6 +107,9 @@ function App() {
   const [searchText, setSearchText] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [siteFilter, setSiteFilter] = useState<SiteFilter>('all')
+  const [tagFilter, setTagFilter] = useState<TagFilter>('all')
+  const [tagSearchText, setTagSearchText] = useState('')
+  const [tagSortMode, setTagSortMode] = useState<TagSortMode>('count')
   const [showTrash, setShowTrash] = useState(false)
   const [selectedCardId, setSelectedCardId] = useState<string | null>(mockCards[0]?.id ?? null)
   const [editorMode, setEditorMode] = useState<EditorMode>('edit')
@@ -107,19 +121,50 @@ function App() {
     return cards.find((card) => card.id === selectedCardId) ?? null
   }, [cards, selectedCardId])
 
+
+  const allTags = useMemo(() => {
+    const tagMap = new Map<string, { name: string; count: number; sites: Set<SiteType> }>()
+
+    cards
+      .filter((card) => card.status !== 'trash')
+      .forEach((card) => {
+        card.tags.forEach((tag) => {
+          const current = tagMap.get(tag.name) ?? {
+            name: tag.name,
+            count: 0,
+            sites: new Set<SiteType>(),
+          }
+          current.count += 1
+          current.sites.add(card.site)
+          tagMap.set(tag.name, current)
+        })
+      })
+
+    const normalizedSearch = tagSearchText.trim().toLowerCase()
+
+    return Array.from(tagMap.values())
+      .filter((tag) => !normalizedSearch || tag.name.includes(normalizedSearch))
+      .sort((a, b) => {
+        if (tagSortMode === 'name') return a.name.localeCompare(b.name)
+        return b.count - a.count || a.name.localeCompare(b.name)
+      })
+  }, [cards, tagSearchText, tagSortMode])
+
   const visibleCards = useMemo(() => {
     return cards
       .filter((card) => (showTrash ? card.status === 'trash' : card.status !== 'trash'))
       .filter((card) => statusFilter === 'all' || card.status === statusFilter)
       .filter((card) => siteFilter === 'all' || card.site === siteFilter)
+      .filter((card) => tagFilter === 'all' || hasTag(card, tagFilter))
       .filter((card) => matchesSearch(card, searchText))
       .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
-  }, [cards, searchText, showTrash, siteFilter, statusFilter])
+  }, [cards, searchText, showTrash, siteFilter, statusFilter, tagFilter])
 
   const activeCardCount = cards.filter((card) => card.status !== 'trash').length
   const articleReadyCount = cards.filter((card) => card.status === 'article-ready').length
   const publishedCount = cards.filter((card) => card.status === 'published').length
   const trashCount = cards.filter((card) => card.status === 'trash').length
+  const totalTagCount = allTags.length
 
   const startNewCard = () => {
     setEditorMode('new')
@@ -255,6 +300,10 @@ function App() {
           <span>ゴミ箱</span>
           <strong>{trashCount}</strong>
         </article>
+        <article className="summary-card">
+          <span>タグ</span>
+          <strong>{totalTagCount}</strong>
+        </article>
       </section>
 
       <section className="workspace-grid">
@@ -305,15 +354,74 @@ function App() {
               onClick={() => {
                 setShowTrash((current) => !current)
                 setStatusFilter('all')
+                setTagFilter('all')
               }}
             >
               {showTrash ? '通常カードへ戻る' : 'ゴミ箱を見る'}
             </button>
           </section>
 
+          <section className="tag-manager" aria-label="タグ管理">
+            <div className="tag-manager-header">
+              <div>
+                <p className="eyebrow">Tags</p>
+                <h2>タグ管理</h2>
+              </div>
+              <button
+                className={tagFilter === 'all' ? 'tag-filter-chip active' : 'tag-filter-chip'}
+                type="button"
+                onClick={() => setTagFilter('all')}
+              >
+                すべて
+              </button>
+            </div>
+
+            <div className="tag-tools">
+              <label>
+                <span>タグ検索</span>
+                <input
+                  value={tagSearchText}
+                  onChange={(event) => setTagSearchText(event.target.value)}
+                  placeholder="例: react"
+                />
+              </label>
+              <label>
+                <span>並び順</span>
+                <select
+                  value={tagSortMode}
+                  onChange={(event) => setTagSortMode(event.target.value as TagSortMode)}
+                >
+                  <option value="count">使用数が多い順</option>
+                  <option value="name">名前順</option>
+                </select>
+              </label>
+            </div>
+
+            {allTags.length === 0 ? (
+              <p className="muted-text">まだタグがありません。カード編集画面でタグを追加してください。</p>
+            ) : (
+              <div className="tag-cloud">
+                {allTags.map((tag) => (
+                  <button
+                    className={tagFilter === tag.name ? 'tag-filter-chip active' : 'tag-filter-chip'}
+                    key={tag.name}
+                    type="button"
+                    onClick={() => setTagFilter((current) => (current === tag.name ? 'all' : tag.name))}
+                  >
+                    <span>#{tag.name}</span>
+                    <strong>{tag.count}</strong>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+
           <section className="card-list" aria-label="カード一覧">
             <div className="list-header">
-              <h2>{showTrash ? 'ゴミ箱' : 'カード一覧'}</h2>
+              <div>
+                <h2>{showTrash ? 'ゴミ箱' : 'カード一覧'}</h2>
+                {tagFilter !== 'all' ? <p className="active-filter-note">#{tagFilter} で絞り込み中</p> : null}
+              </div>
               <span>{visibleCards.length}件</span>
             </div>
 
@@ -449,7 +557,13 @@ function App() {
               value={form.tagsText}
               onChange={(event) => setForm((current) => ({ ...current, tagsText: event.target.value }))}
               placeholder="react, design, note"
+              list="known-tags"
             />
+            <datalist id="known-tags">
+              {allTags.map((tag) => (
+                <option key={tag.name} value={tag.name} />
+              ))}
+            </datalist>
           </label>
 
           <div className="editor-actions">
@@ -464,7 +578,7 @@ function App() {
           </div>
 
           <p className="editor-note">
-            まだSupabaseには保存せず、ReactのローカルstateでCRUDの動きを確認します。次以降でDB接続へ差し替えます。
+            まだSupabaseには保存せず、ReactのローカルstateでCRUDとタグ管理の動きを確認します。次以降でDB接続へ差し替えます。
           </p>
         </aside>
       </section>
