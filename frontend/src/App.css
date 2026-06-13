@@ -12,7 +12,7 @@
   justify-content: space-between;
   gap: 24px;
   align-items: flex-start;
-  max-width: 1180px;
+  max-width: 1320px;
   margin: 0 auto 24px;
 }
 
@@ -68,7 +68,7 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
-  max-width: 1180px;
+  max-width: 1320px;
   margin: 0 auto 18px;
 }
 
@@ -96,11 +96,10 @@
 
 .toolbar {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) 180px 220px auto;
+  grid-template-columns: minmax(220px, 1fr) 150px 190px auto;
   gap: 12px;
   align-items: end;
-  max-width: 1180px;
-  margin: 0 auto 18px;
+  margin: 0 0 18px;
   padding: 16px;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 24px;
@@ -149,9 +148,132 @@
   background: #fee2e2;
 }
 
-.card-list {
-  max-width: 1180px;
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 400px;
+  gap: 18px;
+  max-width: 1320px;
   margin: 0 auto;
+  align-items: start;
+}
+
+.left-pane {
+  min-width: 0;
+}
+
+.editor-panel {
+  position: sticky;
+  top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(14px);
+}
+
+.editor-header,
+.editor-actions,
+.form-row {
+  display: flex;
+  gap: 12px;
+}
+
+.editor-header {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.editor-header h2 {
+  margin: 0;
+  font-size: 1.35rem;
+}
+
+.form-row {
+  align-items: stretch;
+}
+
+.form-row .form-field {
+  flex: 1;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #64748b;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.form-field input,
+.form-field select,
+.form-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #dbe3ef;
+  border-radius: 16px;
+  padding: 12px 14px;
+  color: #0f172a;
+  background: white;
+  font: inherit;
+  outline: none;
+}
+
+.form-field textarea {
+  resize: vertical;
+  min-height: 220px;
+  line-height: 1.7;
+}
+
+.form-field input:focus,
+.form-field select:focus,
+.form-field textarea:focus {
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.14);
+}
+
+.ghost-button,
+.danger-outline-button {
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.ghost-button {
+  padding: 10px 14px;
+  color: #4338ca;
+  background: #eef2ff;
+}
+
+.editor-actions {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.danger-outline-button {
+  padding: 13px 16px;
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.editor-note {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  color: #475569;
+  background: #f8fafc;
+  font-size: 0.84rem;
+  line-height: 1.7;
+}
+
+.card-list {
+  margin: 0;
   padding: 18px;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 28px;
@@ -192,6 +314,11 @@
   border: 1px solid #e2e8f0;
   border-radius: 24px;
   background: white;
+}
+
+.knowledge-card.selected {
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.12);
 }
 
 .card-topline,
@@ -320,11 +447,18 @@
   }
 
   .summary-grid,
-  .cards-grid {
+  .cards-grid,
+  .workspace-grid {
     grid-template-columns: 1fr;
   }
 
-  .toolbar {
+  .editor-panel {
+    position: static;
+  }
+
+  .toolbar,
+  .form-row {
     grid-template-columns: 1fr;
+    flex-direction: column;
   }
 }
