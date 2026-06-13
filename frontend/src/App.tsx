@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type DragEvent, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
 import {
   ARTICLE_BOARD_STATUSES,
   CARD_STATUS_LABELS,
@@ -12,7 +12,7 @@ import { getRelatedCards } from './utils/relatedCards'
 import { downloadCardAsJson, downloadCardsAsJsonBundle } from './utils/jsonExport'
 import { downloadCardAsMarkdown, downloadCardsAsMarkdownBundle } from './utils/markdownExport'
 import { isSupabaseConfigured } from './lib/supabase'
-import { fetchCardsFromSupabase, pushCardsToSupabase } from './services/supabaseCards'
+import { fetchCardsFromSupabase, pushCardsToSupabase, subscribeCardsRealtime } from './services/supabaseCards'
 import './App.css'
 
 type StatusFilter = CardStatus | 'all'
@@ -21,9 +21,11 @@ type TagFilter = string | 'all'
 type TagSortMode = 'count' | 'name'
 type EditorMode = 'new' | 'edit'
 type SyncStatus = 'synced' | 'pending' | 'conflict' | 'syncing'
+type RealtimeStatus = 'disabled' | 'connecting' | 'connected' | 'disconnected' | 'error'
 
 type SyncState = {
   status: SyncStatus
+  realtimeStatus: RealtimeStatus
   pendingCount: number
   conflictCount: number
   lastSyncedAt: string | null
@@ -78,6 +80,7 @@ const RELATED_REASON_LABELS: Record<RelatedCardReason, string> = {
 
 const INITIAL_SYNC_STATE: SyncState = {
   status: 'synced',
+  realtimeStatus: 'disabled',
   pendingCount: 0,
   conflictCount: 0,
   lastSyncedAt: new Date().toISOString(),
@@ -215,6 +218,7 @@ function App() {
   }))
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
   const [syncError, setSyncError] = useState<string | null>(null)
+  const syncStateRef = useRef(syncState)
 
   const selectedCard = useMemo(() => {
     return cards.find((card) => card.id === selectedCardId) ?? null
@@ -257,6 +261,47 @@ function App() {
 
     return () => window.clearTimeout(timerId)
   }, [syncError, syncMessage])
+
+
+  useEffect(() => {
+    syncStateRef.current = syncState
+  }, [syncState])
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setSyncState((current) => ({ ...current, realtimeStatus: 'disabled' }))
+      return
+    }
+
+    const unsubscribe = subscribeCardsRealtime({
+      deviceId: syncState.deviceId,
+      onStatusChange: (realtimeStatus) => {
+        setSyncState((current) => ({ ...current, realtimeStatus }))
+      },
+      onRemoteCards: (remoteCards, eventLabel) => {
+        const currentSyncState = syncStateRef.current
+
+        if (currentSyncState.pendingCount > 0) {
+          setSyncMessage('別端末の更新を検知しました。ローカル未同期変更があるため、自動反映は保留しました。')
+          return
+        }
+
+        setCards(remoteCards)
+        setSyncState((current) => ({
+          ...current,
+          status: current.conflictCount > 0 ? 'conflict' : 'synced',
+          pendingCount: 0,
+          lastSyncedAt: new Date().toISOString(),
+        }))
+        setSyncMessage(`Realtime更新を反映しました。(${eventLabel})`)
+      },
+      onError: (message) => {
+        setSyncError(message)
+      },
+    })
+
+    return unsubscribe
+  }, [syncState.deviceId])
 
   const markLocalChange = () => {
     setSyncState((current) => ({
@@ -561,6 +606,16 @@ function App() {
           : syncState.status === 'synced'
             ? 'ローカル変更はすべて同期済みです。'
             : 'ローカル変更があります。Supabaseへ手動同期できます。'
+  const realtimeStatusLabel =
+    syncState.realtimeStatus === 'connected'
+      ? '接続中'
+      : syncState.realtimeStatus === 'connecting'
+        ? '接続中...'
+        : syncState.realtimeStatus === 'error'
+          ? '接続エラー'
+          : syncState.realtimeStatus === 'disconnected'
+            ? '切断'
+            : '未使用'
 
   const openQuickMemo = () => {
     setQuickMemoTitle('')
@@ -1613,6 +1668,10 @@ function App() {
           <div>
             <span>端末ID</span>
             <strong>{syncState.deviceId}</strong>
+          </div>
+          <div>
+            <span>Realtime</span>
+            <strong>{realtimeStatusLabel}</strong>
           </div>
           <div>
             <span>Supabase</span>

@@ -123,3 +123,88 @@ export async function pushCardsToSupabase(cards: CardWithTags[]): Promise<void> 
     if (error) throw error
   }
 }
+
+
+type RealtimeStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
+
+type CardsRealtimeOptions = {
+  deviceId: string
+  onStatusChange?: (status: RealtimeStatus) => void
+  onRemoteCards: (cards: CardWithTags[], eventLabel: string) => void
+  onError?: (message: string) => void
+}
+
+export function subscribeCardsRealtime(options: CardsRealtimeOptions): () => void {
+  if (!supabase) {
+    options.onStatusChange?.('disconnected')
+    options.onError?.('Supabase URL または anon key が設定されていません。')
+    return () => undefined
+  }
+
+  const client = supabase
+  let disposed = false
+  let reloadTimerId: number | null = null
+
+  const reloadRemoteCards = (eventLabel: string) => {
+    if (reloadTimerId !== null) {
+      window.clearTimeout(reloadTimerId)
+    }
+
+    reloadTimerId = window.setTimeout(async () => {
+      reloadTimerId = null
+      if (disposed) return
+
+      try {
+        const cards = await fetchCardsFromSupabase()
+        if (!disposed) {
+          options.onRemoteCards(cards, eventLabel)
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Realtime更新後の再読込に失敗しました。'
+        options.onStatusChange?.('error')
+        options.onError?.(message)
+      }
+    }, 450)
+  }
+
+  const handlePostgresChange = (payload: { eventType: string; new?: { device_id?: string | null } | null }) => {
+    if (payload.new?.device_id && payload.new.device_id === options.deviceId) {
+      return
+    }
+
+    reloadRemoteCards(payload.eventType)
+  }
+
+  options.onStatusChange?.('connecting')
+
+  const channel = client
+    .channel('knowledge-hub-realtime')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'cards' }, handlePostgresChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tags' }, () => reloadRemoteCards('TAG_CHANGE'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'card_tags' }, () => reloadRemoteCards('CARD_TAG_CHANGE'))
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        options.onStatusChange?.('connected')
+        return
+      }
+
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        options.onStatusChange?.('error')
+        options.onError?.('Supabase Realtimeの接続に失敗しました。')
+        return
+      }
+
+      if (status === 'CLOSED') {
+        options.onStatusChange?.('disconnected')
+      }
+    })
+
+  return () => {
+    disposed = true
+    if (reloadTimerId !== null) {
+      window.clearTimeout(reloadTimerId)
+    }
+    options.onStatusChange?.('disconnected')
+    void client.removeChannel(channel)
+  }
+}

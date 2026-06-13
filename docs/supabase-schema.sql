@@ -64,3 +64,34 @@ create policy "dev tags all" on public.tags for all using (true) with check (tru
 create policy "dev card_tags all" on public.card_tags for all using (true) with check (true);
 create policy "dev card_histories all" on public.card_histories for all using (true) with check (true);
 create policy "dev conflicts all" on public.conflicts for all using (true) with check (true);
+
+-- Realtime同期用。cards / tags / card_tags の変更をフロントエンドへ配信する。
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'cards'
+  ) then
+    alter publication supabase_realtime add table public.cards;
+  end if;
+
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'tags'
+  ) then
+    alter publication supabase_realtime add table public.tags;
+  end if;
+
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'card_tags'
+  ) then
+    alter publication supabase_realtime add table public.card_tags;
+  end if;
+end $$;
