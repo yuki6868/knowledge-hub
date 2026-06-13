@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type KeyboardEvent } from 'react'
 import {
   CARD_STATUS_LABELS,
   CARD_STATUSES,
@@ -187,6 +187,9 @@ function App() {
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
   const [editorMode, setEditorMode] = useState<EditorMode>('new')
   const [form, setForm] = useState<CardFormState>(EMPTY_FORM)
+  const [isQuickMemoOpen, setIsQuickMemoOpen] = useState(false)
+  const [quickMemoTitle, setQuickMemoTitle] = useState('')
+  const [quickMemoBody, setQuickMemoBody] = useState('')
   const [syncState, setSyncState] = useState<SyncState>(INITIAL_SYNC_STATE)
 
   const selectedCard = useMemo(() => {
@@ -399,6 +402,54 @@ function App() {
         ? 'ローカル変更はすべて同期済みです。'
         : 'ローカル変更があります。Supabase接続後はここから同期します。'
 
+  const openQuickMemo = () => {
+    setQuickMemoTitle('')
+    setQuickMemoBody('')
+    setIsQuickMemoOpen(true)
+  }
+
+  const closeQuickMemo = () => {
+    setIsQuickMemoOpen(false)
+  }
+
+  const saveQuickMemo = () => {
+    const trimmedTitle = quickMemoTitle.trim()
+    const trimmedBody = quickMemoBody.trim()
+
+    if (!trimmedTitle && !trimmedBody) return
+
+    const now = new Date().toISOString()
+    const newCard: CardWithTags = {
+      id: createId('card'),
+      title: trimmedTitle || getPreview(trimmedBody) || '無題のメモ',
+      body: quickMemoBody,
+      site: 'other',
+      status: 'inbox',
+      created_at: now,
+      updated_at: now,
+      device_id: 'local-dev',
+      tags: [],
+    }
+
+    setCards((current) => [newCard, ...current])
+    setSelectedCardId(newCard.id)
+    setEditorMode('new')
+    setForm(EMPTY_FORM)
+    setQuickMemoTitle('')
+    setQuickMemoBody('')
+    setIsQuickMemoOpen(false)
+    setShowTrash(false)
+    setShowDetail(false)
+    markLocalChange()
+  }
+
+  const handleQuickMemoKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      event.preventDefault()
+      saveQuickMemo()
+    }
+  }
+
   const startNewCard = () => {
     setEditorMode('new')
     setSelectedCardId(null)
@@ -603,9 +654,73 @@ function App() {
     }))
   }
 
+  const quickMemoModal = isQuickMemoOpen ? (
+    <div
+      className="quick-memo-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="quick-memo-title"
+      onMouseDown={closeQuickMemo}
+    >
+      <section className="quick-memo-dialog" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="quick-memo-header">
+          <div>
+            <p className="eyebrow">Quick Memo</p>
+            <h2 id="quick-memo-title">クイックメモ</h2>
+            <p>あとで整理する前提で、まずは inbox に放り込みます。</p>
+          </div>
+          <button className="quick-memo-close" type="button" onClick={closeQuickMemo} aria-label="閉じる">
+            ×
+          </button>
+        </div>
+
+        <label className="quick-memo-field">
+          <span>タイトル（任意）</span>
+          <input
+            value={quickMemoTitle}
+            onChange={(event) => setQuickMemoTitle(event.target.value)}
+            placeholder="空なら本文から自動で作ります"
+            autoFocus
+          />
+        </label>
+
+        <label className="quick-memo-field">
+          <span>本文</span>
+          <textarea
+            value={quickMemoBody}
+            onChange={(event) => setQuickMemoBody(event.target.value)}
+            onKeyDown={handleQuickMemoKeyDown}
+            placeholder="思いついたことをそのまま書く。Cmd/Ctrl + Enter で保存。"
+            rows={9}
+          />
+        </label>
+
+        <div className="quick-memo-info">
+          <span>保存先</span>
+          <strong>status: inbox / site: other / tags: なし</strong>
+        </div>
+
+        <div className="quick-memo-actions">
+          <button className="ghost-button" type="button" onClick={closeQuickMemo}>
+            キャンセル
+          </button>
+          <button
+            className="primary-button"
+            type="button"
+            onClick={saveQuickMemo}
+            disabled={!quickMemoTitle.trim() && !quickMemoBody.trim()}
+          >
+            inboxへ保存
+          </button>
+        </div>
+      </section>
+    </div>
+  ) : null
+
   if (showTrash) {
     return (
       <main className="app-shell trash-screen">
+        {quickMemoModal}
         <header className="app-header trash-window-header">
           <div>
             <p className="eyebrow">Trash Window</p>
@@ -618,7 +733,7 @@ function App() {
             <button className="ghost-button" type="button" onClick={closeTrashWindow}>
               ← カード一覧へ戻る
             </button>
-            <button className="primary-button" type="button" onClick={startNewCard}>
+            <button className="primary-button" type="button" onClick={openQuickMemo}>
               + クイックメモ
             </button>
           </div>
@@ -734,6 +849,7 @@ function App() {
   if (showDetail && selectedCard) {
     return (
       <main className="app-shell detail-screen">
+        {quickMemoModal}
         <header className="app-header detail-header">
           <div>
             <p className="eyebrow">Card Detail</p>
@@ -746,7 +862,7 @@ function App() {
             <button className="ghost-button" type="button" onClick={() => setShowDetail(false)}>
               ← カード一覧へ戻る
             </button>
-            <button className="primary-button" type="button" onClick={startNewCard}>
+            <button className="primary-button" type="button" onClick={openQuickMemo}>
               + クイックメモ
             </button>
           </div>
@@ -928,6 +1044,7 @@ function App() {
 
   return (
     <main className="app-shell">
+      {quickMemoModal}
       <header className="app-header">
         <div>
           <p className="eyebrow">Knowledge Hub</p>
@@ -936,7 +1053,7 @@ function App() {
             サイト別に知識カードを集め、記事候補・下書き・公開済みまで育てるための管理画面です。
           </p>
         </div>
-        <button className="primary-button" type="button" onClick={startNewCard}>
+        <button className="primary-button" type="button" onClick={openQuickMemo}>
           + クイックメモ
         </button>
       </header>
