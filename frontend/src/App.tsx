@@ -150,6 +150,21 @@ function App() {
       })
   }, [cards, tagSearchText, tagSortMode])
 
+  const siteStats = useMemo(() => {
+    return SITE_TYPES.map((site) => {
+      const siteCards = cards.filter((card) => card.site === site && card.status !== 'trash')
+      return {
+        site,
+        total: siteCards.length,
+        articleReady: siteCards.filter((card) => card.status === 'article-ready').length,
+        draft: siteCards.filter((card) => card.status === 'draft').length,
+        published: siteCards.filter((card) => card.status === 'published').length,
+      }
+    })
+  }, [cards])
+
+  const activeSiteLabel = siteFilter === 'all' ? 'すべてのサイト' : SITE_TYPE_LABELS[siteFilter]
+
   const visibleCards = useMemo(() => {
     return cards
       .filter((card) => (showTrash ? card.status === 'trash' : card.status !== 'trash'))
@@ -177,6 +192,11 @@ function App() {
     setEditorMode('edit')
     setSelectedCardId(card.id)
     setForm(toFormState(card))
+  }
+
+  const selectSite = (site: SiteFilter) => {
+    setSiteFilter(site)
+    setShowTrash(false)
   }
 
   const saveCard = () => {
@@ -273,9 +293,9 @@ function App() {
       <header className="app-header">
         <div>
           <p className="eyebrow">Knowledge Hub</p>
-          <h1>知識カード一覧</h1>
+          <h1>知識カード管理</h1>
           <p className="lead">
-            メモを知識カードとして集め、記事候補・下書き・公開済みまで育てるための最初の一覧画面です。
+            サイト別に知識カードを集め、記事候補・下書き・公開済みまで育てるための管理画面です。
           </p>
         </div>
         <button className="primary-button" type="button" onClick={startNewCard}>
@@ -361,6 +381,41 @@ function App() {
             </button>
           </section>
 
+          <section className="site-manager" aria-label="サイト管理">
+            <div className="site-manager-header">
+              <div>
+                <p className="eyebrow">Sites</p>
+                <h2>サイト別ビュー</h2>
+                <p>{activeSiteLabel} のカードを表示しています。</p>
+              </div>
+              <button
+                className={siteFilter === 'all' ? 'site-filter-card active' : 'site-filter-card'}
+                type="button"
+                onClick={() => selectSite('all')}
+              >
+                <span>すべて</span>
+                <strong>{activeCardCount}</strong>
+              </button>
+            </div>
+
+            <div className="site-grid">
+              {siteStats.map((stat) => (
+                <button
+                  className={siteFilter === stat.site ? 'site-filter-card active' : 'site-filter-card'}
+                  key={stat.site}
+                  type="button"
+                  onClick={() => selectSite(stat.site)}
+                >
+                  <span>{SITE_TYPE_LABELS[stat.site]}</span>
+                  <strong>{stat.total}</strong>
+                  <small>
+                    候補 {stat.articleReady} / 下書き {stat.draft} / 公開 {stat.published}
+                  </small>
+                </button>
+              ))}
+            </div>
+          </section>
+
           <section className="tag-manager" aria-label="タグ管理">
             <div className="tag-manager-header">
               <div>
@@ -420,7 +475,10 @@ function App() {
             <div className="list-header">
               <div>
                 <h2>{showTrash ? 'ゴミ箱' : 'カード一覧'}</h2>
-                {tagFilter !== 'all' ? <p className="active-filter-note">#{tagFilter} で絞り込み中</p> : null}
+                <p className="active-filter-note">
+                  {activeSiteLabel}
+                  {tagFilter !== 'all' ? ` / #${tagFilter}` : ''}
+                </p>
               </div>
               <span>{visibleCards.length}件</span>
             </div>
