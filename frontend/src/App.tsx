@@ -9,6 +9,8 @@ import {
 import { mockCards } from './data/mockCards'
 import type { CardHistory, CardStatus, CardWithTags, Conflict, RelatedCardReason, SiteType, Tag } from './types/knowledge'
 import { getRelatedCards } from './utils/relatedCards'
+import { downloadCardAsJson, downloadCardsAsJsonBundle } from './utils/jsonExport'
+import { downloadCardAsMarkdown, downloadCardsAsMarkdownBundle } from './utils/markdownExport'
 import './App.css'
 
 type StatusFilter = CardStatus | 'all'
@@ -187,6 +189,7 @@ function App() {
   const [showArticleBoard, setShowArticleBoard] = useState(false)
   const [showDetail, setShowDetail] = useState(false)
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
+  const [exportCardIds, setExportCardIds] = useState<string[]>([])
   const [editorMode, setEditorMode] = useState<EditorMode>('new')
   const [form, setForm] = useState<CardFormState>(EMPTY_FORM)
   const [isQuickMemoOpen, setIsQuickMemoOpen] = useState(false)
@@ -437,6 +440,19 @@ function App() {
       .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
   }, [cards, searchText, showTrash, siteFilter, statusFilter, tagFilter])
 
+  const selectedExportCards = useMemo(() => {
+    const selectedIds = new Set(exportCardIds)
+    return cards
+      .filter((card) => selectedIds.has(card.id) && card.status !== 'trash')
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+  }, [cards, exportCardIds])
+
+  const exportableCards = useMemo(() => {
+    return cards
+      .filter((card) => card.status !== 'trash')
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+  }, [cards])
+
   const activeCardCount = cards.filter((card) => card.status !== 'trash').length
   const articleReadyCount = cards.filter((card) => card.status === 'article-ready').length
   const publishedCount = cards.filter((card) => card.status === 'published').length
@@ -546,6 +562,50 @@ function App() {
     setShowTrash(false)
     setStatusFilter('all')
     setTagFilter('all')
+  }
+
+  const toggleExportCard = (cardId: string) => {
+    setExportCardIds((current) =>
+      current.includes(cardId) ? current.filter((id) => id !== cardId) : [...current, cardId],
+    )
+  }
+
+  const selectVisibleExportCards = () => {
+    setExportCardIds(visibleCards.filter((card) => card.status !== 'trash').map((card) => card.id))
+  }
+
+  const clearExportSelection = () => {
+    setExportCardIds([])
+  }
+
+  const exportSelectedCardsAsMarkdown = () => {
+    downloadCardsAsMarkdownBundle(selectedExportCards, 'selected-cards')
+  }
+
+  const exportVisibleCardsAsMarkdown = () => {
+    downloadCardsAsMarkdownBundle(
+      visibleCards.filter((card) => card.status !== 'trash'),
+      'visible-cards',
+    )
+  }
+
+  const exportAllCardsAsMarkdown = () => {
+    downloadCardsAsMarkdownBundle(exportableCards, 'all-cards')
+  }
+
+  const exportSelectedCardsAsJson = () => {
+    downloadCardsAsJsonBundle(selectedExportCards, 'selected-cards')
+  }
+
+  const exportVisibleCardsAsJson = () => {
+    downloadCardsAsJsonBundle(
+      visibleCards.filter((card) => card.status !== 'trash'),
+      'visible-cards',
+    )
+  }
+
+  const exportAllCardsAsJson = () => {
+    downloadCardsAsJsonBundle(exportableCards, 'all-cards')
   }
 
   const saveCard = () => {
@@ -1060,6 +1120,12 @@ function App() {
             <div className="editor-actions detail-actions">
               <button className="primary-button" type="button" onClick={saveCard}>
                 保存
+              </button>
+              <button className="ghost-button" type="button" onClick={() => downloadCardAsMarkdown(selectedCard)}>
+                Markdown出力
+              </button>
+              <button className="ghost-button" type="button" onClick={() => downloadCardAsJson(selectedCard)}>
+                JSON出力
               </button>
               <button className="danger-outline-button" type="button" onClick={() => moveToTrash(selectedCard.id)}>
                 ゴミ箱へ移動
@@ -1732,8 +1798,53 @@ function App() {
                   {tagFilter !== 'all' ? ` / #${tagFilter}` : ''}
                 </p>
               </div>
-              <span>{visibleCards.length}件</span>
+              <div className="list-header-actions">
+                <span>{visibleCards.length}件</span>
+                <button type="button" onClick={selectVisibleExportCards} disabled={showTrash || visibleCards.length === 0}>
+                  表示分を選択
+                </button>
+                <button type="button" onClick={clearExportSelection} disabled={exportCardIds.length === 0}>
+                  選択解除
+                </button>
+              </div>
             </div>
+
+            {!showTrash ? (
+              <div className="export-toolbar" aria-label="Export">
+                <div>
+                  <strong>Export</strong>
+                  <span>選択 {selectedExportCards.length}件 / 表示 {visibleCards.filter((card) => card.status !== 'trash').length}件</span>
+                </div>
+                <div className="export-format-group">
+                  <span>Markdown</span>
+                  <div className="export-actions">
+                    <button type="button" onClick={exportSelectedCardsAsMarkdown} disabled={selectedExportCards.length === 0}>
+                      選択
+                    </button>
+                    <button type="button" onClick={exportVisibleCardsAsMarkdown} disabled={visibleCards.filter((card) => card.status !== 'trash').length === 0}>
+                      表示中
+                    </button>
+                    <button type="button" onClick={exportAllCardsAsMarkdown} disabled={exportableCards.length === 0}>
+                      全カード
+                    </button>
+                  </div>
+                </div>
+                <div className="export-format-group">
+                  <span>JSON</span>
+                  <div className="export-actions">
+                    <button type="button" onClick={exportSelectedCardsAsJson} disabled={selectedExportCards.length === 0}>
+                      選択
+                    </button>
+                    <button type="button" onClick={exportVisibleCardsAsJson} disabled={visibleCards.filter((card) => card.status !== 'trash').length === 0}>
+                      表示中
+                    </button>
+                    <button type="button" onClick={exportAllCardsAsJson} disabled={exportableCards.length === 0}>
+                      全カード
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {visibleCards.length === 0 ? (
               <div className="empty-state">
@@ -1761,6 +1872,16 @@ function App() {
                     }}
                   >
                     <div className="card-topline">
+                      {!showTrash ? (
+                        <label className="export-check" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={exportCardIds.includes(card.id)}
+                            onChange={() => toggleExportCard(card.id)}
+                          />
+                          <span>出力</span>
+                        </label>
+                      ) : null}
                       <span className="site-pill">{SITE_TYPE_LABELS[card.site]}</span>
                       <span className={`status-pill status-${card.status}`}>
                         {CARD_STATUS_LABELS[card.status]}
@@ -1800,6 +1921,9 @@ function App() {
                           ) : null}
                           <button type="button" onClick={() => selectCard(card)}>
                             詳細を見る
+                          </button>
+                          <button type="button" onClick={() => downloadCardAsMarkdown(card)}>
+                            MD出力
                           </button>
                           <button className="danger" type="button" onClick={() => moveToTrash(card.id)}>
                             ゴミ箱へ
@@ -1910,6 +2034,11 @@ function App() {
             <button className="primary-button" type="button" onClick={saveCard}>
               保存
             </button>
+            {editorMode === 'edit' && selectedCard ? (
+              <button className="ghost-button" type="button" onClick={() => downloadCardAsMarkdown(selectedCard)}>
+                Markdown出力
+              </button>
+            ) : null}
             {editorMode === 'edit' && selectedCard ? (
               <button className="danger-outline-button" type="button" onClick={() => moveToTrash(selectedCard.id)}>
                 ゴミ箱へ移動
