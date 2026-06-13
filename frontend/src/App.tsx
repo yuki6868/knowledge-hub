@@ -6,7 +6,7 @@ import {
   SITE_TYPES,
 } from './constants/knowledge'
 import { mockCards } from './data/mockCards'
-import type { CardStatus, CardWithTags, SiteType, Tag } from './types/knowledge'
+import type { CardHistory, CardStatus, CardWithTags, SiteType, Tag } from './types/knowledge'
 import './App.css'
 
 type StatusFilter = CardStatus | 'all'
@@ -156,6 +156,7 @@ function toFormState(card: CardWithTags): CardFormState {
 
 function App() {
   const [cards, setCards] = useState<CardWithTags[]>(mockCards)
+  const [cardHistories, setCardHistories] = useState<CardHistory[]>([])
   const [searchText, setSearchText] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [siteFilter, setSiteFilter] = useState<SiteFilter>('all')
@@ -173,6 +174,14 @@ function App() {
   const selectedCard = useMemo(() => {
     return cards.find((card) => card.id === selectedCardId) ?? null
   }, [cards, selectedCardId])
+
+  const selectedCardHistories = useMemo(() => {
+    if (!selectedCardId) return []
+
+    return cardHistories
+      .filter((history) => history.card_id === selectedCardId)
+      .sort((a, b) => b.saved_at.localeCompare(a.saved_at))
+  }, [cardHistories, selectedCardId])
 
   const markLocalChange = () => {
     setSyncState((current) => ({
@@ -347,6 +356,21 @@ function App() {
 
     if (!selectedCard) return
 
+    const titleChanged = selectedCard.title !== normalizedTitle
+    const bodyChanged = selectedCard.body !== form.body
+
+    if (titleChanged || bodyChanged) {
+      const snapshot: CardHistory = {
+        id: createId('history'),
+        card_id: selectedCard.id,
+        title: selectedCard.title,
+        body: selectedCard.body,
+        saved_at: now,
+      }
+
+      setCardHistories((current) => [snapshot, ...current])
+    }
+
     setCards((current) =>
       current.map((card) =>
         card.id === selectedCard.id
@@ -444,12 +468,21 @@ function App() {
     if (!ok) return
 
     setCards((current) => current.filter((card) => card.id !== cardId))
+    setCardHistories((current) => current.filter((history) => history.card_id !== cardId))
     if (selectedCardId === cardId) {
       setSelectedCardId(null)
       setEditorMode('new')
       setForm(EMPTY_FORM)
     }
     markLocalChange()
+  }
+
+  const restoreHistoryToForm = (history: CardHistory) => {
+    setForm((current) => ({
+      ...current,
+      title: history.title,
+      body: history.body,
+    }))
   }
 
   if (showTrash) {
@@ -1026,8 +1059,39 @@ function App() {
             ) : null}
           </div>
 
+          <section className="history-panel" aria-label="編集履歴">
+            <div className="history-header">
+              <div>
+                <p className="eyebrow">History</p>
+                <h3>編集履歴</h3>
+              </div>
+              <span>{selectedCardHistories.length}件</span>
+            </div>
+
+            {editorMode === 'new' ? (
+              <p className="history-empty">新規カードは保存後に履歴を残せます。</p>
+            ) : selectedCardHistories.length === 0 ? (
+              <p className="history-empty">まだ編集前データはありません。保存時に変更前のタイトルと本文を残します。</p>
+            ) : (
+              <div className="history-list">
+                {selectedCardHistories.map((history) => (
+                  <article className="history-item" key={history.id}>
+                    <div>
+                      <strong>{history.title || '無題のカード'}</strong>
+                      <span>{formatFullDate(history.saved_at)}</span>
+                    </div>
+                    <p>{getPreview(history.body)}</p>
+                    <button type="button" onClick={() => restoreHistoryToForm(history)}>
+                      フォームに戻す
+                    </button>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+
           <p className="editor-note">
-            削除はまずゴミ箱へ移動します。完全削除はゴミ箱画面でのみ実行します。まだSupabaseには保存せず、Reactのローカルstateで動きを確認します。
+            削除はまずゴミ箱へ移動します。完全削除はゴミ箱画面でのみ実行します。保存すると、編集前のタイトルと本文を履歴に残します。
           </p>
         </aside>
       </section>
