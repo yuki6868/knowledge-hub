@@ -1,10 +1,11 @@
 import { supabase } from '../lib/supabase'
-import type { CardWithTags, Tag } from '../types/knowledge'
+import type { CardHistory, CardWithTags, Tag } from '../types/knowledge'
 import type { Database } from '../types/database'
 
 type CardRow = Database['public']['Tables']['cards']['Row']
 type TagRow = Database['public']['Tables']['tags']['Row']
 type CardTagRow = Database['public']['Tables']['card_tags']['Row']
+type CardHistoryRow = Database['public']['Tables']['card_histories']['Row']
 
 function toCardRow(card: CardWithTags): CardRow {
   return {
@@ -46,6 +47,27 @@ function toCardTagRows(cards: CardWithTags[]): CardTagRow[] {
       tag_id: tag.id,
     })),
   )
+}
+
+
+function toCardHistoryRow(history: CardHistory): CardHistoryRow {
+  return {
+    id: history.id,
+    card_id: history.card_id,
+    title: history.title,
+    body: history.body,
+    saved_at: history.saved_at,
+  }
+}
+
+function toCardHistory(row: CardHistoryRow): CardHistory {
+  return {
+    id: row.id,
+    card_id: row.card_id,
+    title: row.title,
+    body: row.body,
+    saved_at: row.saved_at,
+  }
 }
 
 export async function fetchCardsFromSupabase(): Promise<CardWithTags[]> {
@@ -93,6 +115,22 @@ export async function fetchCardsFromSupabase(): Promise<CardWithTags[]> {
   }))
 }
 
+
+export async function fetchCardHistoriesFromSupabase(): Promise<CardHistory[]> {
+  if (!supabase) {
+    throw new Error('Supabase URL または anon key が設定されていません。')
+  }
+
+  const { data, error } = await supabase
+    .from('card_histories')
+    .select('*')
+    .order('saved_at', { ascending: false })
+
+  if (error) throw error
+
+  return (data ?? []).map(toCardHistory)
+}
+
 export async function pushCardsToSupabase(cards: CardWithTags[]): Promise<void> {
   if (!supabase) {
     throw new Error('Supabase URL または anon key が設定されていません。')
@@ -125,12 +163,40 @@ export async function pushCardsToSupabase(cards: CardWithTags[]): Promise<void> 
 }
 
 
+export async function pushCardHistoriesToSupabase(histories: CardHistory[]): Promise<void> {
+  if (!supabase) {
+    throw new Error('Supabase URL または anon key が設定されていません。')
+  }
+
+  if (histories.length === 0) return
+
+  const { error } = await supabase
+    .from('card_histories')
+    .upsert(histories.map(toCardHistoryRow), { onConflict: 'id' })
+
+  if (error) throw error
+}
+
+export async function insertCardHistoryToSupabase(history: CardHistory): Promise<void> {
+  if (!supabase) {
+    throw new Error('Supabase URL または anon key が設定されていません。')
+  }
+
+  const { error } = await supabase
+    .from('card_histories')
+    .upsert(toCardHistoryRow(history), { onConflict: 'id' })
+
+  if (error) throw error
+}
+
+
+
 type RealtimeStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
 type CardsRealtimeOptions = {
   deviceId: string
   onStatusChange?: (status: RealtimeStatus) => void
-  onRemoteCards: (cards: CardWithTags[], eventLabel: string) => void
+  onRemoteCards: (cards: CardWithTags[], histories: CardHistory[], eventLabel: string) => void
   onError?: (message: string) => void
 }
 
@@ -155,9 +221,12 @@ export function subscribeCardsRealtime(options: CardsRealtimeOptions): () => voi
       if (disposed) return
 
       try {
-        const cards = await fetchCardsFromSupabase()
+        const [cards, histories] = await Promise.all([
+          fetchCardsFromSupabase(),
+          fetchCardHistoriesFromSupabase(),
+        ])
         if (!disposed) {
-          options.onRemoteCards(cards, eventLabel)
+          options.onRemoteCards(cards, histories, eventLabel)
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Realtime更新後の再読込に失敗しました。'

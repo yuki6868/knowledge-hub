@@ -12,7 +12,14 @@ import { getRelatedCards } from './utils/relatedCards'
 import { downloadCardAsJson, downloadCardsAsJsonBundle } from './utils/jsonExport'
 import { downloadCardAsMarkdown, downloadCardsAsMarkdownBundle } from './utils/markdownExport'
 import { isSupabaseConfigured } from './lib/supabase'
-import { fetchCardsFromSupabase, pushCardsToSupabase, subscribeCardsRealtime } from './services/supabaseCards'
+import {
+  fetchCardHistoriesFromSupabase,
+  fetchCardsFromSupabase,
+  insertCardHistoryToSupabase,
+  pushCardHistoriesToSupabase,
+  pushCardsToSupabase,
+  subscribeCardsRealtime,
+} from './services/supabaseCards'
 import './App.css'
 
 type StatusFilter = CardStatus | 'all'
@@ -278,7 +285,7 @@ function App() {
       onStatusChange: (realtimeStatus) => {
         setSyncState((current) => ({ ...current, realtimeStatus }))
       },
-      onRemoteCards: (remoteCards, eventLabel) => {
+      onRemoteCards: (remoteCards, remoteHistories, eventLabel) => {
         const currentSyncState = syncStateRef.current
 
         if (currentSyncState.pendingCount > 0) {
@@ -287,6 +294,7 @@ function App() {
         }
 
         setCards(remoteCards)
+        setCardHistories(remoteHistories)
         setSyncState((current) => ({
           ...current,
           status: current.conflictCount > 0 ? 'conflict' : 'synced',
@@ -328,8 +336,12 @@ function App() {
     setSyncState((current) => ({ ...current, status: 'syncing' }))
 
     try {
-      const remoteCards = await fetchCardsFromSupabase()
+      const [remoteCards, remoteHistories] = await Promise.all([
+        fetchCardsFromSupabase(),
+        fetchCardHistoriesFromSupabase(),
+      ])
       setCards(remoteCards)
+      setCardHistories(remoteHistories)
       setSelectedCardId(null)
       setShowDetail(false)
       setShowTrash(false)
@@ -342,7 +354,7 @@ function App() {
         conflictCount: unresolvedConflicts.length,
         lastSyncedAt: new Date().toISOString(),
       }))
-      setSyncMessage(`Supabaseから${remoteCards.length}件読み込みました。`)
+      setSyncMessage(`Supabaseからカード${remoteCards.length}件・履歴${remoteHistories.length}件を読み込みました。`)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Supabaseからの読み込みに失敗しました。'
       setSyncError(message)
@@ -359,7 +371,10 @@ function App() {
     setSyncState((current) => ({ ...current, status: 'syncing' }))
 
     try {
-      await pushCardsToSupabase(cards)
+      await Promise.all([
+        pushCardsToSupabase(cards),
+        pushCardHistoriesToSupabase(cardHistories),
+      ])
       setSyncState((current) => ({
         ...current,
         status: unresolvedConflicts.length > 0 ? 'conflict' : 'synced',
@@ -367,7 +382,7 @@ function App() {
         conflictCount: unresolvedConflicts.length,
         lastSyncedAt: new Date().toISOString(),
       }))
-      setSyncMessage(`Supabaseへ${cards.length}件同期しました。`)
+      setSyncMessage(`Supabaseへカード${cards.length}件・履歴${cardHistories.length}件を同期しました。`)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Supabaseへの同期に失敗しました。'
       setSyncError(message)
@@ -799,6 +814,18 @@ function App() {
       }
 
       setCardHistories((current) => [snapshot, ...current])
+
+      if (isSupabaseConfigured) {
+        void insertCardHistoryToSupabase(snapshot).catch((error) => {
+          const message = error instanceof Error ? error.message : '編集履歴のSupabase保存に失敗しました。'
+          setSyncError(message)
+          setSyncState((current) => ({
+            ...current,
+            status: 'pending',
+            pendingCount: current.pendingCount + 1,
+          }))
+        })
+      }
     }
 
     setCards((current) =>
@@ -958,6 +985,7 @@ function App() {
       title: history.title,
       body: history.body,
     }))
+    setSyncMessage('履歴の内容をフォームへ戻しました。保存すると現在版として反映されます。')
   }
 
   const quickMemoModal = isQuickMemoOpen ? (
