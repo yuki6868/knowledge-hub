@@ -183,11 +183,10 @@ function App() {
   const [tagSearchText, setTagSearchText] = useState('')
   const [tagSortMode, setTagSortMode] = useState<TagSortMode>('count')
   const [showTrash, setShowTrash] = useState(false)
-  const [selectedCardId, setSelectedCardId] = useState<string | null>(mockCards[0]?.id ?? null)
-  const [editorMode, setEditorMode] = useState<EditorMode>('edit')
-  const [form, setForm] = useState<CardFormState>(
-    mockCards[0] ? toFormState(mockCards[0]) : EMPTY_FORM,
-  )
+  const [showDetail, setShowDetail] = useState(false)
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
+  const [editorMode, setEditorMode] = useState<EditorMode>('new')
+  const [form, setForm] = useState<CardFormState>(EMPTY_FORM)
   const [syncState, setSyncState] = useState<SyncState>(INITIAL_SYNC_STATE)
 
   const selectedCard = useMemo(() => {
@@ -405,12 +404,14 @@ function App() {
     setSelectedCardId(null)
     setForm(EMPTY_FORM)
     setShowTrash(false)
+    setShowDetail(false)
   }
 
   const selectCard = (card: CardWithTags) => {
     setEditorMode('edit')
     setSelectedCardId(card.id)
     setForm(toFormState(card))
+    setShowDetail(true)
   }
 
   const jumpToRelatedCard = (card: CardWithTags) => {
@@ -431,6 +432,7 @@ function App() {
     setStatusFilter('all')
     setTagFilter('all')
     setSelectedCardId(null)
+    setShowDetail(false)
     setEditorMode('new')
     setForm(EMPTY_FORM)
   }
@@ -461,7 +463,9 @@ function App() {
 
       setCards((current) => [newCard, ...current])
       setSelectedCardId(newCard.id)
-      setEditorMode('edit')
+      setEditorMode('new')
+      setShowDetail(false)
+      setForm(EMPTY_FORM)
       markLocalChange()
       return
     }
@@ -569,6 +573,7 @@ function App() {
 
     if (selectedCardId && trashIds.has(selectedCardId)) {
       setSelectedCardId(null)
+      setShowDetail(false)
       setEditorMode('new')
       setForm(EMPTY_FORM)
     }
@@ -583,6 +588,7 @@ function App() {
     setCardHistories((current) => current.filter((history) => history.card_id !== cardId))
     if (selectedCardId === cardId) {
       setSelectedCardId(null)
+      setShowDetail(false)
       setEditorMode('new')
       setForm(EMPTY_FORM)
     }
@@ -702,7 +708,7 @@ function App() {
                   </div>
                   <div className="card-footer">
                     <span>更新 {formatDate(card.updated_at)}</span>
-                    <div className="action-row">
+                    <div className="action-row" onClick={(event) => event.stopPropagation()}>
                       <button type="button" onClick={() => restoreCard(card.id)}>
                         復元
                       </button>
@@ -719,6 +725,202 @@ function App() {
               ))}
             </div>
           )}
+        </section>
+      </main>
+    )
+  }
+
+
+  if (showDetail && selectedCard) {
+    return (
+      <main className="app-shell detail-screen">
+        <header className="app-header detail-header">
+          <div>
+            <p className="eyebrow">Card Detail</p>
+            <h1>{selectedCard.title || '無題のカード'}</h1>
+            <p className="lead">
+              一覧とは別画面で、本文・タグ・状態・関連カード・履歴をまとめて確認します。
+            </p>
+          </div>
+          <div className="detail-header-actions">
+            <button className="ghost-button" type="button" onClick={() => setShowDetail(false)}>
+              ← カード一覧へ戻る
+            </button>
+            <button className="primary-button" type="button" onClick={startNewCard}>
+              + クイックメモ
+            </button>
+          </div>
+        </header>
+
+        <section className="detail-layout" aria-label="カード詳細">
+          <article className="detail-main-panel">
+            <div className="detail-card-meta">
+              <span className="site-pill">{SITE_TYPE_LABELS[selectedCard.site]}</span>
+              <span className={`status-pill status-${selectedCard.status}`}>
+                {CARD_STATUS_LABELS[selectedCard.status]}
+              </span>
+              <span>作成 {formatDate(selectedCard.created_at)}</span>
+              <span>更新 {formatDate(selectedCard.updated_at)}</span>
+            </div>
+
+            <label className="form-field">
+              <span>タイトル</span>
+              <input
+                value={form.title}
+                onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
+                placeholder="例: React設計メモ"
+              />
+            </label>
+
+            <label className="form-field">
+              <span>本文</span>
+              <textarea
+                value={form.body}
+                onChange={(event) => setForm((current) => ({ ...current, body: event.target.value }))}
+                placeholder="思いついたことをそのまま書く"
+                rows={16}
+              />
+            </label>
+
+            <div className="form-row">
+              <label className="form-field">
+                <span>サイト</span>
+                <select
+                  value={form.site}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, site: event.target.value as SiteType }))
+                  }
+                >
+                  {SITE_TYPES.map((site) => (
+                    <option key={site} value={site}>
+                      {SITE_TYPE_LABELS[site]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="form-field">
+                <span>状態</span>
+                <select
+                  value={form.status}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, status: event.target.value as CardStatus }))
+                  }
+                >
+                  {ACTIVE_CARD_STATUSES.map((status) => (
+                    <option key={status} value={status}>
+                      {CARD_STATUS_LABELS[status]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="status-quick-actions" aria-label="状態変更ショートカット">
+              {STATUS_FLOW.map((step) => (
+                <button
+                  className={form.status === step.status ? 'status-step-button active' : 'status-step-button'}
+                  key={step.status}
+                  type="button"
+                  onClick={() => setForm((current) => ({ ...current, status: step.status }))}
+                >
+                  {CARD_STATUS_LABELS[step.status]}
+                </button>
+              ))}
+            </div>
+
+            <label className="form-field">
+              <span>タグ</span>
+              <input
+                value={form.tagsText}
+                onChange={(event) => setForm((current) => ({ ...current, tagsText: event.target.value }))}
+                placeholder="react, design, note"
+                list="known-tags"
+              />
+              <datalist id="known-tags">
+                {allTags.map((tag) => (
+                  <option key={tag.name} value={tag.name} />
+                ))}
+              </datalist>
+            </label>
+
+            <div className="editor-actions detail-actions">
+              <button className="primary-button" type="button" onClick={saveCard}>
+                保存
+              </button>
+              <button className="danger-outline-button" type="button" onClick={() => moveToTrash(selectedCard.id)}>
+                ゴミ箱へ移動
+              </button>
+            </div>
+          </article>
+
+          <aside className="detail-side-panel">
+            <section className="related-panel" aria-label="関連カード">
+              <div className="related-header">
+                <div>
+                  <p className="eyebrow">Related Cards</p>
+                  <h3>関連カード</h3>
+                </div>
+                <span>{relatedCards.length}件</span>
+              </div>
+
+              {relatedCards.length === 0 ? (
+                <p className="related-empty">タグ・サイト・タイトル・本文単語が近いカードはまだありません。</p>
+              ) : (
+                <div className="related-list">
+                  {relatedCards.map((card) => (
+                    <button
+                      className="related-item"
+                      key={card.id}
+                      type="button"
+                      onClick={() => jumpToRelatedCard(card)}
+                    >
+                      <div className="related-item-main">
+                        <strong>{card.title || '無題のカード'}</strong>
+                        <span>{SITE_TYPE_LABELS[card.site]}</span>
+                      </div>
+                      <p>{getPreview(card.body)}</p>
+                      <div className="related-meta">
+                        <b>{card.score}点</b>
+                        {card.reasons.map((reason) => (
+                          <em key={reason}>{RELATED_REASON_LABELS[reason]}</em>
+                        ))}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="history-panel" aria-label="編集履歴">
+              <div className="history-header">
+                <div>
+                  <p className="eyebrow">History</p>
+                  <h3>編集履歴</h3>
+                </div>
+                <span>{selectedCardHistories.length}件</span>
+              </div>
+
+              {selectedCardHistories.length === 0 ? (
+                <p className="history-empty">まだ編集前データはありません。保存時に変更前のタイトルと本文を残します。</p>
+              ) : (
+                <div className="history-list">
+                  {selectedCardHistories.map((history) => (
+                    <article className="history-item" key={history.id}>
+                      <div>
+                        <strong>{history.title || '無題のカード'}</strong>
+                        <span>{formatFullDate(history.saved_at)}</span>
+                      </div>
+                      <p>{getPreview(history.body)}</p>
+                      <button type="button" onClick={() => restoreHistoryToForm(history)}>
+                        フォームに戻す
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+          </aside>
         </section>
       </main>
     )
@@ -1061,7 +1263,7 @@ function App() {
           <section className="card-list" aria-label="カード一覧">
             <div className="list-header">
               <div>
-                <h2>{showTrash ? 'ゴミ箱' : 'カード一覧'}</h2>
+                <h2>カード一覧</h2>
                 <p className="active-filter-note">
                   {activeSiteLabel}
                   {tagFilter !== 'all' ? ` / #${tagFilter}` : ''}
@@ -1085,6 +1287,15 @@ function App() {
                         : 'knowledge-card'
                     }
                     key={card.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => selectCard(card)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        selectCard(card)
+                      }
+                    }}
                   >
                     <div className="card-topline">
                       <span className="site-pill">{SITE_TYPE_LABELS[card.site]}</span>
@@ -1102,7 +1313,7 @@ function App() {
                     <div className="card-footer">
                       <span>更新 {formatDate(card.updated_at)}</span>
                       {showTrash ? (
-                        <div className="action-row">
+                        <div className="action-row" onClick={(event) => event.stopPropagation()}>
                           <button type="button" onClick={() => restoreCard(card.id)}>
                             復元
                           </button>
@@ -1115,7 +1326,7 @@ function App() {
                           </button>
                         </div>
                       ) : (
-                        <div className="action-row">
+                        <div className="action-row" onClick={(event) => event.stopPropagation()}>
                           {getNextStatus(card.status) ? (
                             <button
                               type="button"
@@ -1125,7 +1336,7 @@ function App() {
                             </button>
                           ) : null}
                           <button type="button" onClick={() => selectCard(card)}>
-                            編集
+                            詳細を見る
                           </button>
                           <button className="danger" type="button" onClick={() => moveToTrash(card.id)}>
                             ゴミ箱へ
