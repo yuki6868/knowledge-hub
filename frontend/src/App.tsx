@@ -1,5 +1,6 @@
-import { useMemo, useState, type KeyboardEvent } from 'react'
+import { useMemo, useState, type DragEvent, type KeyboardEvent } from 'react'
 import {
+  ARTICLE_BOARD_STATUSES,
   CARD_STATUS_LABELS,
   CARD_STATUSES,
   SITE_TYPE_LABELS,
@@ -183,6 +184,7 @@ function App() {
   const [tagSearchText, setTagSearchText] = useState('')
   const [tagSortMode, setTagSortMode] = useState<TagSortMode>('count')
   const [showTrash, setShowTrash] = useState(false)
+  const [showArticleBoard, setShowArticleBoard] = useState(false)
   const [showDetail, setShowDetail] = useState(false)
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
   const [editorMode, setEditorMode] = useState<EditorMode>('new')
@@ -190,6 +192,8 @@ function App() {
   const [isQuickMemoOpen, setIsQuickMemoOpen] = useState(false)
   const [quickMemoTitle, setQuickMemoTitle] = useState('')
   const [quickMemoBody, setQuickMemoBody] = useState('')
+  const [draggingArticleCardId, setDraggingArticleCardId] = useState<string | null>(null)
+  const [dragOverArticleStatus, setDragOverArticleStatus] = useState<CardStatus | null>(null)
   const [syncState, setSyncState] = useState<SyncState>(INITIAL_SYNC_STATE)
 
   const selectedCard = useMemo(() => {
@@ -374,6 +378,17 @@ function App() {
     })
   }, [cards])
 
+  const articleBoardColumns = useMemo(() => {
+    return ARTICLE_BOARD_STATUSES.map((status) => ({
+      status,
+      cards: cards
+        .filter((card) => card.status === status)
+        .sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+    }))
+  }, [cards])
+
+  const articlePipelineCount = articleBoardColumns.reduce((total, column) => total + column.cards.length, 0)
+
   const activeSiteLabel = siteFilter === 'all' ? 'すべてのサイト' : SITE_TYPE_LABELS[siteFilter]
   const activeStatusLabel = statusFilter === 'all' ? 'すべての状態' : CARD_STATUS_LABELS[statusFilter]
 
@@ -439,6 +454,7 @@ function App() {
     setQuickMemoBody('')
     setIsQuickMemoOpen(false)
     setShowTrash(false)
+    setShowArticleBoard(false)
     setShowDetail(false)
     markLocalChange()
   }
@@ -455,6 +471,7 @@ function App() {
     setSelectedCardId(null)
     setForm(EMPTY_FORM)
     setShowTrash(false)
+    setShowArticleBoard(false)
     setShowDetail(false)
   }
 
@@ -467,6 +484,7 @@ function App() {
 
   const jumpToRelatedCard = (card: CardWithTags) => {
     setShowTrash(false)
+    setShowArticleBoard(false)
     setStatusFilter('all')
     setTagFilter('all')
     setSiteFilter('all')
@@ -480,6 +498,7 @@ function App() {
 
   const openTrashWindow = () => {
     setShowTrash(true)
+    setShowArticleBoard(false)
     setStatusFilter('all')
     setTagFilter('all')
     setSelectedCardId(null)
@@ -583,6 +602,49 @@ function App() {
 
     // 状態変更後に勝手に画面遷移しない。
     // ゴミ箱へ移動してもカード一覧に残り、復元してもゴミ箱画面に残る。
+  }
+
+  const openArticleBoard = () => {
+    setShowArticleBoard(true)
+    setShowTrash(false)
+    setStatusFilter('all')
+    setTagFilter('all')
+  }
+
+  const closeArticleBoard = () => {
+    setShowArticleBoard(false)
+  }
+
+  const handleArticleDragStart = (event: DragEvent<HTMLElement>, cardId: string) => {
+    setDraggingArticleCardId(cardId)
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', cardId)
+  }
+
+  const handleArticleDragEnd = () => {
+    setDraggingArticleCardId(null)
+    setDragOverArticleStatus(null)
+  }
+
+  const handleArticleDragOver = (event: DragEvent<HTMLElement>, status: CardStatus) => {
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    setDragOverArticleStatus(status)
+  }
+
+  const handleArticleDrop = (event: DragEvent<HTMLElement>, status: CardStatus) => {
+    event.preventDefault()
+
+    const cardId = event.dataTransfer.getData('text/plain') || draggingArticleCardId
+    setDraggingArticleCardId(null)
+    setDragOverArticleStatus(null)
+
+    if (!cardId) return
+
+    const targetCard = cards.find((card) => card.id === cardId)
+    if (!targetCard || targetCard.status === status) return
+
+    updateCardStatus(cardId, status)
   }
 
   const restoreCard = (cardId: string) => {
@@ -1042,6 +1104,146 @@ function App() {
     )
   }
 
+
+  if (showArticleBoard) {
+    return (
+      <main className="app-shell article-board-screen">
+        {quickMemoModal}
+        <header className="app-header article-board-screen-header">
+          <div>
+            <p className="eyebrow">Article Board</p>
+            <h1>記事化ボード</h1>
+            <p className="lead">
+              記事候補・下書き・公開済みを別画面のKanbanで管理します。カードをドラッグ&ドロップして状態を移動できます。
+            </p>
+          </div>
+          <div className="article-board-window-actions">
+            <button className="ghost-button" type="button" onClick={closeArticleBoard}>
+              ← カード一覧へ戻る
+            </button>
+            <button className="primary-button" type="button" onClick={openQuickMemo}>
+              + クイックメモ
+            </button>
+          </div>
+        </header>
+
+        <section className="article-board-summary" aria-label="記事化ボードサマリー">
+          <article className="summary-card">
+            <span>記事候補</span>
+            <strong>{articleReadyCount}</strong>
+          </article>
+          <article className="summary-card">
+            <span>下書き</span>
+            <strong>{cards.filter((card) => card.status === 'draft').length}</strong>
+          </article>
+          <article className="summary-card">
+            <span>公開済み</span>
+            <strong>{publishedCount}</strong>
+          </article>
+          <div className="article-board-note">
+            <strong>ドラッグで状態変更</strong>
+            <p>列にドロップすると status を更新します。大量に増えても列ごとにスクロールできます。</p>
+          </div>
+        </section>
+
+        <section className="article-board article-board-full" aria-label="記事化ボード">
+          <div className="article-board-header">
+            <div>
+              <p className="eyebrow">Kanban</p>
+              <h2>記事パイプライン</h2>
+              <p>カードを掴んで、記事候補・下書き・公開済みの列へ移動します。</p>
+            </div>
+            <strong>{articlePipelineCount}件</strong>
+          </div>
+
+          <div className="article-kanban article-kanban-full">
+            {articleBoardColumns.map((column) => (
+              <section
+                className={
+                  dragOverArticleStatus === column.status
+                    ? `article-column article-column-${column.status} drag-over`
+                    : `article-column article-column-${column.status}`
+                }
+                key={column.status}
+                onDragOver={(event) => handleArticleDragOver(event, column.status)}
+                onDragLeave={() => setDragOverArticleStatus(null)}
+                onDrop={(event) => handleArticleDrop(event, column.status)}
+              >
+                <div className="article-column-header">
+                  <div>
+                    <h3>{CARD_STATUS_LABELS[column.status]}</h3>
+                    <span>{column.cards.length}件</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStatusFilter(column.status)
+                      setShowArticleBoard(false)
+                      setShowTrash(false)
+                    }}
+                  >
+                    一覧で絞る
+                  </button>
+                </div>
+
+                {column.cards.length === 0 ? (
+                  <div className="article-column-empty">
+                    <strong>{CARD_STATUS_LABELS[column.status]}は空です</strong>
+                    <p>ここにカードをドロップできます。</p>
+                  </div>
+                ) : (
+                  <div className="article-column-list">
+                    {column.cards.map((card) => {
+                      const nextStatus = getNextStatus(card.status)
+                      return (
+                        <article
+                          className={
+                            draggingArticleCardId === card.id
+                              ? 'article-board-card dragging'
+                              : 'article-board-card'
+                          }
+                          key={card.id}
+                          draggable
+                          onDragStart={(event) => handleArticleDragStart(event, card.id)}
+                          onDragEnd={handleArticleDragEnd}
+                        >
+                          <div className="article-drag-handle" aria-hidden="true">⋮⋮</div>
+                          <div className="card-topline">
+                            <span className="site-pill">{SITE_TYPE_LABELS[card.site]}</span>
+                            <span className={`status-pill status-${card.status}`}>
+                              {CARD_STATUS_LABELS[card.status]}
+                            </span>
+                          </div>
+                          <h4>{card.title || '無題のカード'}</h4>
+                          <p>{getPreview(card.body)}</p>
+                          <div className="tag-row">
+                            {card.tags.slice(0, 4).map((tag) => (
+                              <span key={tag.id}>#{tag.name}</span>
+                            ))}
+                          </div>
+                          <div className="article-card-actions">
+                            <button type="button" onClick={() => selectCard(card)}>
+                              詳細
+                            </button>
+                            {nextStatus && ARTICLE_BOARD_STATUSES.includes(nextStatus) ? (
+                              <button type="button" onClick={() => updateCardStatus(card.id, nextStatus)}>
+                                {CARD_STATUS_LABELS[nextStatus]}へ
+                              </button>
+                            ) : null}
+                          </div>
+                        </article>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
+            ))}
+          </div>
+        </section>
+      </main>
+    )
+  }
+
   return (
     <main className="app-shell">
       {quickMemoModal}
@@ -1053,9 +1255,14 @@ function App() {
             サイト別に知識カードを集め、記事候補・下書き・公開済みまで育てるための管理画面です。
           </p>
         </div>
-        <button className="primary-button" type="button" onClick={openQuickMemo}>
-          + クイックメモ
-        </button>
+        <div className="header-actions">
+          <button className="ghost-button" type="button" onClick={openArticleBoard}>
+            記事化ボード
+          </button>
+          <button className="primary-button" type="button" onClick={openQuickMemo}>
+            + クイックメモ
+          </button>
+        </div>
       </header>
 
       <section className="summary-grid" aria-label="進捗サマリー">
