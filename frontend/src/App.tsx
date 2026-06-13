@@ -6,7 +6,7 @@ import {
   SITE_TYPES,
 } from './constants/knowledge'
 import { mockCards } from './data/mockCards'
-import type { CardHistory, CardStatus, CardWithTags, SiteType, Tag } from './types/knowledge'
+import type { CardHistory, CardStatus, CardWithTags, Conflict, SiteType, Tag } from './types/knowledge'
 import './App.css'
 
 type StatusFilter = CardStatus | 'all'
@@ -122,6 +122,14 @@ function normalizeTagName(value: string): string {
   return value.trim().replace(/^#/, '').toLowerCase()
 }
 
+function getConflictPreview(localValue: string | null, remoteValue: string | null): string {
+  if (localValue && remoteValue && localValue !== remoteValue) return '差分あり'
+  if (localValue === remoteValue) return '同じ内容'
+  if (localValue && !remoteValue) return 'ローカルのみ'
+  if (!localValue && remoteValue) return 'リモートのみ'
+  return '空'
+}
+
 function hasTag(card: CardWithTags, tagName: string): boolean {
   return card.tags.some((tag) => tag.name === tagName)
 }
@@ -157,6 +165,8 @@ function toFormState(card: CardWithTags): CardFormState {
 function App() {
   const [cards, setCards] = useState<CardWithTags[]>(mockCards)
   const [cardHistories, setCardHistories] = useState<CardHistory[]>([])
+  const [conflicts, setConflicts] = useState<Conflict[]>([])
+  const [selectedConflictId, setSelectedConflictId] = useState<string | null>(null)
   const [searchText, setSearchText] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [siteFilter, setSiteFilter] = useState<SiteFilter>('all')
@@ -183,24 +193,61 @@ function App() {
       .sort((a, b) => b.saved_at.localeCompare(a.saved_at))
   }, [cardHistories, selectedCardId])
 
+  const unresolvedConflicts = useMemo(() => {
+    return conflicts
+      .filter((conflict) => !conflict.resolved)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+  }, [conflicts])
+
+  const selectedConflict = useMemo(() => {
+    return unresolvedConflicts.find((conflict) => conflict.id === selectedConflictId) ?? unresolvedConflicts[0] ?? null
+  }, [selectedConflictId, unresolvedConflicts])
+
+  const selectedConflictCard = useMemo(() => {
+    if (!selectedConflict) return null
+    return cards.find((card) => card.id === selectedConflict.card_id) ?? null
+  }, [cards, selectedConflict])
+
   const markLocalChange = () => {
     setSyncState((current) => ({
       ...current,
-      status: current.conflictCount > 0 ? 'conflict' : 'pending',
+      status: unresolvedConflicts.length > 0 ? 'conflict' : 'pending',
       pendingCount: current.pendingCount + 1,
+      conflictCount: unresolvedConflicts.length,
     }))
   }
 
   const markSynced = () => {
     setSyncState((current) => ({
       ...current,
-      status: current.conflictCount > 0 ? 'conflict' : 'synced',
+      status: unresolvedConflicts.length > 0 ? 'conflict' : 'synced',
       pendingCount: 0,
+      conflictCount: unresolvedConflicts.length,
       lastSyncedAt: new Date().toISOString(),
     }))
   }
 
   const simulateConflict = () => {
+    const targetCard = selectedCard ?? cards.find((card) => card.status !== 'trash') ?? null
+    if (!targetCard) return
+
+    const now = new Date().toISOString()
+    const conflict: Conflict = {
+      id: createId('conflict'),
+      card_id: targetCard.id,
+      local_title: targetCard.title,
+      local_body: targetCard.body,
+      remote_title: `${targetCard.title}（別端末版）`,
+      remote_body: `${targetCard.body}
+
+---
+別端末で追記された想定メモです。`,
+      created_at: now,
+      resolved: false,
+    }
+
+    setConflicts((current) => [conflict, ...current])
+    setSelectedConflictId(conflict.id)
     setSyncState((current) => ({
       ...current,
       status: 'conflict',
@@ -208,7 +255,51 @@ function App() {
     }))
   }
 
+  const resolveConflict = (conflictId: string, strategy: 'local' | 'remote') => {
+    const conflict = conflicts.find((item) => item.id === conflictId)
+    if (!conflict) return
+
+    const now = new Date().toISOString()
+
+    if (strategy === 'remote') {
+      setCards((current) =>
+        current.map((card) =>
+          card.id === conflict.card_id
+            ? {
+                ...card,
+                title: conflict.remote_title ?? card.title,
+                body: conflict.remote_body ?? card.body,
+                updated_at: now,
+              }
+            : card,
+        ),
+      )
+
+      if (selectedCardId === conflict.card_id) {
+        setForm((current) => ({
+          ...current,
+          title: conflict.remote_title ?? current.title,
+          body: conflict.remote_body ?? current.body,
+        }))
+      }
+    }
+
+    setConflicts((current) =>
+      current.map((item) => (item.id === conflictId ? { ...item, resolved: true } : item)),
+    )
+    setSelectedConflictId(null)
+
+    const nextConflictCount = Math.max(unresolvedConflicts.length - 1, 0)
+    setSyncState((current) => ({
+      ...current,
+      status: nextConflictCount > 0 ? 'conflict' : current.pendingCount > 0 ? 'pending' : 'synced',
+      conflictCount: nextConflictCount,
+    }))
+  }
+
   const resolveConflicts = () => {
+    setConflicts((current) => current.map((conflict) => ({ ...conflict, resolved: true })))
+    setSelectedConflictId(null)
     setSyncState((current) => ({
       ...current,
       status: current.pendingCount > 0 ? 'pending' : 'synced',
@@ -288,13 +379,13 @@ function App() {
   const trashCount = trashCards.length
   const totalTagCount = allTags.length
   const syncStatusLabel =
-    syncState.status === 'synced' ? '同期済み' : syncState.status === 'pending' ? '未同期あり' : '競合あり'
+    unresolvedConflicts.length > 0 ? '競合あり' : syncState.status === 'synced' ? '同期済み' : '未同期あり'
   const syncStatusDescription =
-    syncState.status === 'synced'
-      ? 'ローカル変更はすべて同期済みです。'
-      : syncState.status === 'pending'
-        ? 'ローカル変更があります。Supabase接続後はここから同期します。'
-        : '別端末更新との衝突を検出した想定です。競合解決画面につなげます。'
+    unresolvedConflicts.length > 0
+      ? '別端末更新との衝突があります。下の競合管理で採用する内容を選びます。'
+      : syncState.status === 'synced'
+        ? 'ローカル変更はすべて同期済みです。'
+        : 'ローカル変更があります。Supabase接続後はここから同期します。'
 
   const startNewCard = () => {
     setEditorMode('new')
@@ -667,7 +758,7 @@ function App() {
           </div>
           <div>
             <span>競合件数</span>
-            <strong>{syncState.conflictCount}</strong>
+            <strong>{unresolvedConflicts.length}</strong>
           </div>
           <div>
             <span>最終同期</span>
@@ -690,6 +781,78 @@ function App() {
             競合解決済みにする
           </button>
         </div>
+      </section>
+
+      <section className="conflict-panel" aria-label="競合管理">
+        <div className="conflict-panel-header">
+          <div>
+            <p className="eyebrow">Conflicts</p>
+            <h2>競合管理</h2>
+            <p>同じカードを複数端末で編集した時に、ローカル版かリモート版を選ぶための場所です。</p>
+          </div>
+          <strong>{unresolvedConflicts.length}件</strong>
+        </div>
+
+        {unresolvedConflicts.length === 0 ? (
+          <div className="conflict-empty">
+            <strong>未解決の競合はありません</strong>
+            <p>同期実装後は、競合が起きたカードだけここに表示します。</p>
+          </div>
+        ) : (
+          <div className="conflict-layout">
+            <div className="conflict-list" aria-label="競合一覧">
+              {unresolvedConflicts.map((conflict) => {
+                const card = cards.find((item) => item.id === conflict.card_id)
+                return (
+                  <button
+                    className={selectedConflict?.id === conflict.id ? 'conflict-list-item active' : 'conflict-list-item'}
+                    key={conflict.id}
+                    type="button"
+                    onClick={() => setSelectedConflictId(conflict.id)}
+                  >
+                    <span>{card?.title ?? conflict.local_title ?? '削除済みカード'}</span>
+                    <small>{formatFullDate(conflict.created_at)}</small>
+                  </button>
+                )
+              })}
+            </div>
+
+            {selectedConflict ? (
+              <div className="conflict-detail">
+                <div className="conflict-target-card">
+                  <span>対象カード</span>
+                  <strong>{selectedConflictCard?.title ?? selectedConflict.local_title ?? '削除済みカード'}</strong>
+                </div>
+
+                <div className="conflict-compare-grid">
+                  <article className="conflict-version-card">
+                    <div className="conflict-version-header">
+                      <strong>ローカル版</strong>
+                      <span>{getConflictPreview(selectedConflict.local_title, selectedConflict.remote_title)}</span>
+                    </div>
+                    <h3>{selectedConflict.local_title || '無題のカード'}</h3>
+                    <p>{selectedConflict.local_body || '本文なし'}</p>
+                    <button type="button" onClick={() => resolveConflict(selectedConflict.id, 'local')}>
+                      ローカル版を採用
+                    </button>
+                  </article>
+
+                  <article className="conflict-version-card remote-version">
+                    <div className="conflict-version-header">
+                      <strong>リモート版</strong>
+                      <span>{getConflictPreview(selectedConflict.remote_body, selectedConflict.local_body)}</span>
+                    </div>
+                    <h3>{selectedConflict.remote_title || '無題のカード'}</h3>
+                    <p>{selectedConflict.remote_body || '本文なし'}</p>
+                    <button type="button" onClick={() => resolveConflict(selectedConflict.id, 'remote')}>
+                      リモート版を採用
+                    </button>
+                  </article>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
       </section>
 
       <section className="workspace-grid">
