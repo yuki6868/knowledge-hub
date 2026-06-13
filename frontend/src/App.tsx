@@ -378,6 +378,41 @@ function App() {
     })
   }, [cards])
 
+  const dashboardStats = useMemo(() => {
+    const activeCards = cards.filter((card) => card.status !== 'trash')
+    const articleCards = activeCards.filter((card) =>
+      ['article-ready', 'draft', 'published'].includes(card.status),
+    )
+    const publishedCards = activeCards.filter((card) => card.status === 'published')
+    const recentCards = [...activeCards]
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+      .slice(0, 4)
+
+    const siteRows = SITE_TYPES.map((site) => {
+      const siteCards = activeCards.filter((card) => card.site === site)
+      const published = siteCards.filter((card) => card.status === 'published').length
+      const inPipeline = siteCards.filter((card) =>
+        ['article-ready', 'draft', 'published'].includes(card.status),
+      ).length
+
+      return {
+        site,
+        total: siteCards.length,
+        inPipeline,
+        published,
+      }
+    }).sort((a, b) => b.total - a.total || a.site.localeCompare(b.site))
+
+    return {
+      articleCards,
+      publishedCards,
+      recentCards,
+      siteRows,
+      pipelineRate: activeCards.length > 0 ? Math.round((articleCards.length / activeCards.length) * 100) : 0,
+      publishRate: articleCards.length > 0 ? Math.round((publishedCards.length / articleCards.length) * 100) : 0,
+    }
+  }, [cards])
+
   const articleBoardColumns = useMemo(() => {
     return ARTICLE_BOARD_STATUSES.map((status) => ({
       status,
@@ -1286,6 +1321,110 @@ function App() {
           <span>タグ</span>
           <strong>{totalTagCount}</strong>
         </article>
+      </section>
+
+      <section className="progress-dashboard" aria-label="進捗ダッシュボード">
+        <div className="dashboard-hero-card">
+          <div>
+            <p className="eyebrow">Progress Dashboard</p>
+            <h2>記事化の進み具合</h2>
+            <p>inbox から公開済みまで、知識カードがどこで止まっているかを一目で確認します。</p>
+          </div>
+
+          <div className="dashboard-rate-grid">
+            <div className="dashboard-rate-card">
+              <span>記事化レーン投入率</span>
+              <strong>{dashboardStats.pipelineRate}%</strong>
+              <div className="dashboard-meter" aria-hidden="true">
+                <i style={{ width: `${dashboardStats.pipelineRate}%` }} />
+              </div>
+              <small>{dashboardStats.articleCards.length} / {activeCardCount} 件</small>
+            </div>
+            <div className="dashboard-rate-card">
+              <span>公開到達率</span>
+              <strong>{dashboardStats.publishRate}%</strong>
+              <div className="dashboard-meter" aria-hidden="true">
+                <i style={{ width: `${dashboardStats.publishRate}%` }} />
+              </div>
+              <small>{publishedCount} / {dashboardStats.articleCards.length} 件</small>
+            </div>
+          </div>
+        </div>
+
+        <div className="dashboard-status-panel">
+          <div className="dashboard-panel-header">
+            <div>
+              <p className="eyebrow">Status</p>
+              <h3>状態別カード数</h3>
+            </div>
+            <span>{activeCardCount}件</span>
+          </div>
+          <div className="dashboard-status-list">
+            {statusStats.map((stat) => {
+              const width = activeCardCount > 0 ? Math.round((stat.count / activeCardCount) * 100) : 0
+              return (
+                <button
+                  className="dashboard-status-row"
+                  key={stat.status}
+                  type="button"
+                  onClick={() => {
+                    setStatusFilter(stat.status)
+                    setShowTrash(false)
+                    setShowArticleBoard(false)
+                  }}
+                >
+                  <span>{CARD_STATUS_LABELS[stat.status]}</span>
+                  <div className="dashboard-mini-meter" aria-hidden="true">
+                    <i style={{ width: `${width}%` }} />
+                  </div>
+                  <strong>{stat.count}</strong>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="dashboard-site-panel">
+          <div className="dashboard-panel-header">
+            <div>
+              <p className="eyebrow">Sites</p>
+              <h3>サイト別数</h3>
+            </div>
+            <span>{SITE_TYPES.length}サイト</span>
+          </div>
+          <div className="dashboard-site-list">
+            {dashboardStats.siteRows.map((row) => (
+              <button
+                className="dashboard-site-row"
+                key={row.site}
+                type="button"
+                onClick={() => selectSite(row.site)}
+              >
+                <span>{SITE_TYPE_LABELS[row.site]}</span>
+                <strong>{row.total}</strong>
+                <small>候補以上 {row.inPipeline} / 公開 {row.published}</small>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="dashboard-recent-panel">
+          <div className="dashboard-panel-header">
+            <div>
+              <p className="eyebrow">Recent</p>
+              <h3>最近更新したカード</h3>
+            </div>
+          </div>
+          <div className="dashboard-recent-list">
+            {dashboardStats.recentCards.map((card) => (
+              <button className="dashboard-recent-item" key={card.id} type="button" onClick={() => selectCard(card)}>
+                <strong>{card.title || '無題のカード'}</strong>
+                <span>{SITE_TYPE_LABELS[card.site]} / {CARD_STATUS_LABELS[card.status]}</span>
+                <small>{formatDate(card.updated_at)}</small>
+              </button>
+            ))}
+          </div>
+        </div>
       </section>
 
       <section className={`sync-panel sync-${syncState.status}`} aria-label="同期状態">
