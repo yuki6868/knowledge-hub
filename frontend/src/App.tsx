@@ -14,6 +14,15 @@ type SiteFilter = SiteType | 'all'
 type TagFilter = string | 'all'
 type TagSortMode = 'count' | 'name'
 type EditorMode = 'new' | 'edit'
+type SyncStatus = 'synced' | 'pending' | 'conflict'
+
+type SyncState = {
+  status: SyncStatus
+  pendingCount: number
+  conflictCount: number
+  lastSyncedAt: string | null
+  deviceId: string
+}
 
 type StatusStep = {
   status: CardStatus
@@ -53,12 +62,33 @@ const EMPTY_FORM: CardFormState = {
   tagsText: '',
 }
 
+const INITIAL_SYNC_STATE: SyncState = {
+  status: 'synced',
+  pendingCount: 0,
+  conflictCount: 0,
+  lastSyncedAt: new Date().toISOString(),
+  deviceId: 'local-dev',
+}
+
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat('ja-JP', {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+  }).format(new Date(value))
+}
+
+function formatFullDate(value: string | null): string {
+  if (!value) return 'まだ同期していません'
+
+  return new Intl.DateTimeFormat('ja-JP', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
   }).format(new Date(value))
 }
 
@@ -138,11 +168,44 @@ function App() {
   const [form, setForm] = useState<CardFormState>(
     mockCards[0] ? toFormState(mockCards[0]) : EMPTY_FORM,
   )
+  const [syncState, setSyncState] = useState<SyncState>(INITIAL_SYNC_STATE)
 
   const selectedCard = useMemo(() => {
     return cards.find((card) => card.id === selectedCardId) ?? null
   }, [cards, selectedCardId])
 
+  const markLocalChange = () => {
+    setSyncState((current) => ({
+      ...current,
+      status: current.conflictCount > 0 ? 'conflict' : 'pending',
+      pendingCount: current.pendingCount + 1,
+    }))
+  }
+
+  const markSynced = () => {
+    setSyncState((current) => ({
+      ...current,
+      status: current.conflictCount > 0 ? 'conflict' : 'synced',
+      pendingCount: 0,
+      lastSyncedAt: new Date().toISOString(),
+    }))
+  }
+
+  const simulateConflict = () => {
+    setSyncState((current) => ({
+      ...current,
+      status: 'conflict',
+      conflictCount: current.conflictCount + 1,
+    }))
+  }
+
+  const resolveConflicts = () => {
+    setSyncState((current) => ({
+      ...current,
+      status: current.pendingCount > 0 ? 'pending' : 'synced',
+      conflictCount: 0,
+    }))
+  }
 
   const allTags = useMemo(() => {
     const tagMap = new Map<string, { name: string; count: number; sites: Set<SiteType> }>()
@@ -215,6 +278,14 @@ function App() {
   const trashCards = cards.filter((card) => card.status === 'trash')
   const trashCount = trashCards.length
   const totalTagCount = allTags.length
+  const syncStatusLabel =
+    syncState.status === 'synced' ? '同期済み' : syncState.status === 'pending' ? '未同期あり' : '競合あり'
+  const syncStatusDescription =
+    syncState.status === 'synced'
+      ? 'ローカル変更はすべて同期済みです。'
+      : syncState.status === 'pending'
+        ? 'ローカル変更があります。Supabase接続後はここから同期します。'
+        : '別端末更新との衝突を検出した想定です。競合解決画面につなげます。'
 
   const startNewCard = () => {
     setEditorMode('new')
@@ -270,6 +341,7 @@ function App() {
       setCards((current) => [newCard, ...current])
       setSelectedCardId(newCard.id)
       setEditorMode('edit')
+      markLocalChange()
       return
     }
 
@@ -290,6 +362,7 @@ function App() {
           : card,
       ),
     )
+    markLocalChange()
   }
 
   const moveToTrash = (cardId: string) => {
@@ -314,6 +387,8 @@ function App() {
     if (selectedCardId === cardId) {
       setForm((current) => ({ ...current, status }))
     }
+
+    markLocalChange()
 
     // 状態変更後に勝手に画面遷移しない。
     // ゴミ箱へ移動してもカード一覧に残り、復元してもゴミ箱画面に残る。
@@ -341,6 +416,7 @@ function App() {
           : card,
       ),
     )
+    markLocalChange()
     // 全件復元後も勝手にカード一覧へ戻らない。
   }
 
@@ -360,6 +436,7 @@ function App() {
       setEditorMode('new')
       setForm(EMPTY_FORM)
     }
+    markLocalChange()
   }
 
   const permanentlyDeleteCard = (cardId: string) => {
@@ -372,6 +449,7 @@ function App() {
       setEditorMode('new')
       setForm(EMPTY_FORM)
     }
+    markLocalChange()
   }
 
   if (showTrash) {
@@ -537,6 +615,48 @@ function App() {
           <span>タグ</span>
           <strong>{totalTagCount}</strong>
         </article>
+      </section>
+
+      <section className={`sync-panel sync-${syncState.status}`} aria-label="同期状態">
+        <div className="sync-panel-main">
+          <div>
+            <p className="eyebrow">Sync Status</p>
+            <h2>{syncStatusLabel}</h2>
+            <p>{syncStatusDescription}</p>
+          </div>
+          <span className="sync-badge">{syncStatusLabel}</span>
+        </div>
+
+        <div className="sync-metrics" aria-label="同期メトリクス">
+          <div>
+            <span>未同期件数</span>
+            <strong>{syncState.pendingCount}</strong>
+          </div>
+          <div>
+            <span>競合件数</span>
+            <strong>{syncState.conflictCount}</strong>
+          </div>
+          <div>
+            <span>最終同期</span>
+            <strong>{formatFullDate(syncState.lastSyncedAt)}</strong>
+          </div>
+          <div>
+            <span>端末ID</span>
+            <strong>{syncState.deviceId}</strong>
+          </div>
+        </div>
+
+        <div className="sync-actions">
+          <button type="button" onClick={markSynced} disabled={syncState.pendingCount === 0}>
+            同期済みにする
+          </button>
+          <button type="button" onClick={simulateConflict}>
+            競合を仮作成
+          </button>
+          <button type="button" onClick={resolveConflicts} disabled={syncState.conflictCount === 0}>
+            競合解決済みにする
+          </button>
+        </div>
       </section>
 
       <section className="workspace-grid">
