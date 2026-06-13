@@ -20,6 +20,8 @@ type StatusStep = {
   description: string
 }
 
+const ACTIVE_CARD_STATUSES = CARD_STATUSES.filter((status) => status !== 'trash')
+
 const STATUS_FLOW: StatusStep[] = [
   { status: 'inbox', description: '最速メモの受け皿' },
   { status: 'card', description: '知識カード化済み' },
@@ -210,7 +212,8 @@ function App() {
   const activeCardCount = cards.filter((card) => card.status !== 'trash').length
   const articleReadyCount = cards.filter((card) => card.status === 'article-ready').length
   const publishedCount = cards.filter((card) => card.status === 'published').length
-  const trashCount = cards.filter((card) => card.status === 'trash').length
+  const trashCards = cards.filter((card) => card.status === 'trash')
+  const trashCount = trashCards.length
   const totalTagCount = allTags.length
 
   const startNewCard = () => {
@@ -229,6 +232,21 @@ function App() {
   const selectSite = (site: SiteFilter) => {
     setSiteFilter(site)
     setShowTrash(false)
+  }
+
+  const openTrashWindow = () => {
+    setShowTrash(true)
+    setStatusFilter('all')
+    setTagFilter('all')
+    setSelectedCardId(null)
+    setEditorMode('new')
+    setForm(EMPTY_FORM)
+  }
+
+  const closeTrashWindow = () => {
+    setShowTrash(false)
+    setStatusFilter('all')
+    setTagFilter('all')
   }
 
   const saveCard = () => {
@@ -297,15 +315,51 @@ function App() {
       setForm((current) => ({ ...current, status }))
     }
 
-    if (status === 'trash') {
-      setShowTrash(true)
-    } else {
-      setShowTrash(false)
-    }
+    // 状態変更後に勝手に画面遷移しない。
+    // ゴミ箱へ移動してもカード一覧に残り、復元してもゴミ箱画面に残る。
   }
 
   const restoreCard = (cardId: string) => {
     updateCardStatus(cardId, 'card')
+  }
+
+  const restoreAllTrashCards = () => {
+    if (trashCount === 0) return
+
+    const ok = window.confirm(`ゴミ箱内の${trashCount}件をすべてカードへ復元します。`)
+    if (!ok) return
+
+    const now = new Date().toISOString()
+    setCards((current) =>
+      current.map((card) =>
+        card.status === 'trash'
+          ? {
+              ...card,
+              status: 'card',
+              updated_at: now,
+            }
+          : card,
+      ),
+    )
+    // 全件復元後も勝手にカード一覧へ戻らない。
+  }
+
+  const emptyTrash = () => {
+    if (trashCount === 0) return
+
+    const ok = window.confirm(
+      `ゴミ箱内の${trashCount}件を完全削除します。復元できません。実行しますか？`,
+    )
+    if (!ok) return
+
+    const trashIds = new Set(trashCards.map((card) => card.id))
+    setCards((current) => current.filter((card) => card.status !== 'trash'))
+
+    if (selectedCardId && trashIds.has(selectedCardId)) {
+      setSelectedCardId(null)
+      setEditorMode('new')
+      setForm(EMPTY_FORM)
+    }
   }
 
   const permanentlyDeleteCard = (cardId: string) => {
@@ -318,6 +372,133 @@ function App() {
       setEditorMode('new')
       setForm(EMPTY_FORM)
     }
+  }
+
+  if (showTrash) {
+    return (
+      <main className="app-shell trash-screen">
+        <header className="app-header trash-window-header">
+          <div>
+            <p className="eyebrow">Trash Window</p>
+            <h1>ゴミ箱</h1>
+            <p className="lead">
+              通常削除したカードだけを別画面で確認します。復元するか、ここから明示的に完全削除します。
+            </p>
+          </div>
+          <div className="trash-window-actions">
+            <button className="ghost-button" type="button" onClick={closeTrashWindow}>
+              ← カード一覧へ戻る
+            </button>
+            <button className="primary-button" type="button" onClick={startNewCard}>
+              + クイックメモ
+            </button>
+          </div>
+        </header>
+
+        <section className="trash-window-summary" aria-label="ゴミ箱サマリー">
+          <article className="summary-card danger-summary">
+            <span>ゴミ箱内</span>
+            <strong>{trashCount}</strong>
+          </article>
+          <article className="summary-card">
+            <span>通常カード</span>
+            <strong>{activeCardCount}</strong>
+          </article>
+          <div className="trash-window-note">
+            <strong>ここは別画面です。</strong>
+            <p>通常一覧ではゴミ箱カードを表示しません。完全削除はこの画面だけで実行します。</p>
+          </div>
+        </section>
+
+        <section className="toolbar trash-toolbar" aria-label="ゴミ箱検索">
+          <label className="search-box">
+            <span>ゴミ箱内検索</span>
+            <input
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+              placeholder="タイトル・本文・タグで検索"
+            />
+          </label>
+          <label>
+            <span>サイト</span>
+            <select
+              value={siteFilter}
+              onChange={(event) => setSiteFilter(event.target.value as SiteFilter)}
+            >
+              <option value="all">すべて</option>
+              {SITE_TYPES.map((site) => (
+                <option key={site} value={site}>
+                  {SITE_TYPE_LABELS[site]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="trash-actions">
+            <button type="button" onClick={restoreAllTrashCards} disabled={trashCount === 0}>
+              全て復元
+            </button>
+            <button className="danger" type="button" onClick={emptyTrash} disabled={trashCount === 0}>
+              ゴミ箱を空にする
+            </button>
+          </div>
+        </section>
+
+        <section className="card-list trash-card-list" aria-label="ゴミ箱カード一覧">
+          <div className="list-header">
+            <div>
+              <h2>ゴミ箱のカード</h2>
+              <p className="active-filter-note">
+                {activeSiteLabel}
+                {tagFilter !== 'all' ? ` / #${tagFilter}` : ''}
+              </p>
+            </div>
+            <span>{visibleCards.length}件</span>
+          </div>
+
+          {visibleCards.length === 0 ? (
+            <div className="empty-state">
+              <strong>ゴミ箱は空です</strong>
+              <p>削除したカードはここに表示されます。</p>
+            </div>
+          ) : (
+            <div className="cards-grid trash-cards-grid">
+              {visibleCards.map((card) => (
+                <article className="knowledge-card trash-card" key={card.id}>
+                  <div className="card-topline">
+                    <span className="site-pill">{SITE_TYPE_LABELS[card.site]}</span>
+                    <span className={`status-pill status-${card.status}`}>
+                      {CARD_STATUS_LABELS[card.status]}
+                    </span>
+                  </div>
+                  <h3>{card.title}</h3>
+                  <p>{getPreview(card.body)}</p>
+                  <div className="tag-row">
+                    {card.tags.map((tag) => (
+                      <span key={tag.id}>#{tag.name}</span>
+                    ))}
+                  </div>
+                  <div className="card-footer">
+                    <span>更新 {formatDate(card.updated_at)}</span>
+                    <div className="action-row">
+                      <button type="button" onClick={() => restoreCard(card.id)}>
+                        復元
+                      </button>
+                      <button
+                        className="danger"
+                        type="button"
+                        onClick={() => permanentlyDeleteCard(card.id)}
+                      >
+                        完全削除
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      </main>
+    )
   }
 
   return (
@@ -377,7 +558,7 @@ function App() {
                 onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
               >
                 <option value="all">すべて</option>
-                {CARD_STATUSES.map((status) => (
+                {ACTIVE_CARD_STATUSES.map((status) => (
                   <option key={status} value={status}>
                     {CARD_STATUS_LABELS[status]}
                   </option>
@@ -401,15 +582,11 @@ function App() {
             </label>
 
             <button
-              className={showTrash ? 'toggle-button active' : 'toggle-button'}
+              className="toggle-button"
               type="button"
-              onClick={() => {
-                setShowTrash((current) => !current)
-                setStatusFilter('all')
-                setTagFilter('all')
-              }}
+              onClick={openTrashWindow}
             >
-              {showTrash ? '通常カードへ戻る' : 'ゴミ箱を見る'}
+              ゴミ箱を別画面で開く
             </button>
           </section>
 
@@ -542,6 +719,7 @@ function App() {
               </div>
             )}
           </section>
+
 
           <section className="card-list" aria-label="カード一覧">
             <div className="list-header">
@@ -680,7 +858,7 @@ function App() {
                   setForm((current) => ({ ...current, status: event.target.value as CardStatus }))
                 }
               >
-                {CARD_STATUSES.map((status) => (
+                {ACTIVE_CARD_STATUSES.map((status) => (
                   <option key={status} value={status}>
                     {CARD_STATUS_LABELS[status]}
                   </option>
@@ -729,7 +907,7 @@ function App() {
           </div>
 
           <p className="editor-note">
-            まだSupabaseには保存せず、ReactのローカルstateでCRUDとタグ管理の動きを確認します。次以降でDB接続へ差し替えます。
+            削除はまずゴミ箱へ移動します。完全削除はゴミ箱画面でのみ実行します。まだSupabaseには保存せず、Reactのローカルstateで動きを確認します。
           </p>
         </aside>
       </section>
