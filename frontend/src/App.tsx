@@ -15,6 +15,26 @@ type TagFilter = string | 'all'
 type TagSortMode = 'count' | 'name'
 type EditorMode = 'new' | 'edit'
 
+type StatusStep = {
+  status: CardStatus
+  description: string
+}
+
+const STATUS_FLOW: StatusStep[] = [
+  { status: 'inbox', description: '最速メモの受け皿' },
+  { status: 'card', description: '知識カード化済み' },
+  { status: 'article-ready', description: '記事にできる候補' },
+  { status: 'draft', description: '下書き作成中' },
+  { status: 'published', description: '公開済み' },
+  { status: 'archived', description: '保管・参照用' },
+]
+
+function getNextStatus(status: CardStatus): CardStatus | null {
+  const index = STATUS_FLOW.findIndex((step) => step.status === status)
+  if (index < 0 || index >= STATUS_FLOW.length - 1) return null
+  return STATUS_FLOW[index + 1].status
+}
+
 type CardFormState = {
   title: string
   body: string
@@ -163,7 +183,19 @@ function App() {
     })
   }, [cards])
 
+  const statusStats = useMemo(() => {
+    return STATUS_FLOW.map((step) => {
+      const statusCards = cards.filter((card) => card.status === step.status)
+      return {
+        ...step,
+        count: statusCards.length,
+        latestUpdatedAt: statusCards.map((card) => card.updated_at).sort().at(-1) ?? null,
+      }
+    })
+  }, [cards])
+
   const activeSiteLabel = siteFilter === 'all' ? 'すべてのサイト' : SITE_TYPE_LABELS[siteFilter]
+  const activeStatusLabel = statusFilter === 'all' ? 'すべての状態' : CARD_STATUS_LABELS[statusFilter]
 
   const visibleCards = useMemo(() => {
     return cards
@@ -243,6 +275,10 @@ function App() {
   }
 
   const moveToTrash = (cardId: string) => {
+    updateCardStatus(cardId, 'trash')
+  }
+
+  const updateCardStatus = (cardId: string, status: CardStatus) => {
     const now = new Date().toISOString()
 
     setCards((current) =>
@@ -250,30 +286,26 @@ function App() {
         card.id === cardId
           ? {
               ...card,
-              status: 'trash',
+              status,
               updated_at: now,
             }
           : card,
       ),
     )
-    setShowTrash(true)
+
+    if (selectedCardId === cardId) {
+      setForm((current) => ({ ...current, status }))
+    }
+
+    if (status === 'trash') {
+      setShowTrash(true)
+    } else {
+      setShowTrash(false)
+    }
   }
 
   const restoreCard = (cardId: string) => {
-    const now = new Date().toISOString()
-
-    setCards((current) =>
-      current.map((card) =>
-        card.id === cardId
-          ? {
-              ...card,
-              status: 'card',
-              updated_at: now,
-            }
-          : card,
-      ),
-    )
-    setShowTrash(false)
+    updateCardStatus(cardId, 'card')
   }
 
   const permanentlyDeleteCard = (cardId: string) => {
@@ -379,6 +411,46 @@ function App() {
             >
               {showTrash ? '通常カードへ戻る' : 'ゴミ箱を見る'}
             </button>
+          </section>
+
+          <section className="status-manager" aria-label="ステータス管理">
+            <div className="status-manager-header">
+              <div>
+                <p className="eyebrow">Status Flow</p>
+                <h2>ステータス管理</h2>
+                <p>{activeStatusLabel} のカードを表示しています。</p>
+              </div>
+              <button
+                className={statusFilter === 'all' && !showTrash ? 'status-filter-card active' : 'status-filter-card'}
+                type="button"
+                onClick={() => {
+                  setStatusFilter('all')
+                  setShowTrash(false)
+                }}
+              >
+                <span>すべて</span>
+                <strong>{activeCardCount}</strong>
+              </button>
+            </div>
+
+            <div className="status-flow-grid">
+              {statusStats.map((stat) => (
+                <button
+                  className={statusFilter === stat.status && !showTrash ? 'status-filter-card active' : 'status-filter-card'}
+                  key={stat.status}
+                  type="button"
+                  onClick={() => {
+                    setStatusFilter(stat.status)
+                    setShowTrash(false)
+                  }}
+                >
+                  <span>{CARD_STATUS_LABELS[stat.status]}</span>
+                  <strong>{stat.count}</strong>
+                  <small>{stat.description}</small>
+                  {stat.latestUpdatedAt ? <em>最終更新 {formatDate(stat.latestUpdatedAt)}</em> : null}
+                </button>
+              ))}
+            </div>
           </section>
 
           <section className="site-manager" aria-label="サイト管理">
@@ -529,6 +601,14 @@ function App() {
                         </div>
                       ) : (
                         <div className="action-row">
+                          {getNextStatus(card.status) ? (
+                            <button
+                              type="button"
+                              onClick={() => updateCardStatus(card.id, getNextStatus(card.status)!)}
+                            >
+                              {CARD_STATUS_LABELS[getNextStatus(card.status)!]}へ
+                            </button>
+                          ) : null}
                           <button type="button" onClick={() => selectCard(card)}>
                             編集
                           </button>
@@ -607,6 +687,19 @@ function App() {
                 ))}
               </select>
             </label>
+          </div>
+
+          <div className="status-quick-actions" aria-label="状態変更ショートカット">
+            {STATUS_FLOW.map((step) => (
+              <button
+                className={form.status === step.status ? 'status-step-button active' : 'status-step-button'}
+                key={step.status}
+                type="button"
+                onClick={() => setForm((current) => ({ ...current, status: step.status }))}
+              >
+                {CARD_STATUS_LABELS[step.status]}
+              </button>
+            ))}
           </div>
 
           <label className="form-field">
