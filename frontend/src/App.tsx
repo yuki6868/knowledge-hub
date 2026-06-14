@@ -1514,13 +1514,13 @@ function App() {
             </p>
           </div>
           <div className="trash-window-actions">
-            {authBar}
             <button className="ghost-button" type="button" onClick={closeTrashWindow}>
               ← カード一覧へ戻る
             </button>
             <button className="primary-button" type="button" onClick={openQuickMemo}>
               + クイックメモ
             </button>
+            {authBar}
           </div>
         </header>
 
@@ -1848,13 +1848,13 @@ function App() {
             </p>
           </div>
           <div className="article-board-window-actions">
-            {authBar}
             <button className="ghost-button" type="button" onClick={closeArticleBoard}>
               ← カード一覧へ戻る
             </button>
             <button className="primary-button" type="button" onClick={openQuickMemo}>
               + クイックメモ
             </button>
+            {authBar}
           </div>
         </header>
 
@@ -1987,13 +1987,13 @@ function App() {
           </p>
         </div>
         <div className="header-actions">
-          {authBar}
           <button className="ghost-button" type="button" onClick={openArticleBoard}>
             記事化ボード
           </button>
           <button className="primary-button" type="button" onClick={openQuickMemo}>
             + クイックメモ
           </button>
+          {authBar}
         </div>
       </header>
 

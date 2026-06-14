@@ -423,6 +423,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  align-items: center;
   justify-content: flex-end;
 }
 
@@ -904,6 +905,12 @@
   background: rgba(255, 255, 255, 0.74);
   box-shadow: 0 18px 50px rgba(15, 23, 42, 0.06);
   backdrop-filter: blur(14px);
+}
+
+.trash-card-list {
+  max-width: 1320px;
+  margin-right: auto;
+  margin-left: auto;
 }
 
 .list-header {
@@ -2036,6 +2043,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  align-items: center;
   justify-content: flex-end;
 }
 
@@ -2145,6 +2153,17 @@
   .header-actions button,
   .article-board-window-actions button {
     flex: 1 1 160px;
+  }
+
+  .header-actions .auth-menu,
+  .article-board-window-actions .auth-menu,
+  .trash-window-actions .auth-menu {
+    width: 100%;
+  }
+
+  .auth-user-button {
+    width: 100%;
+    max-width: none;
   }
 
   .article-board-summary {
@@ -2481,19 +2500,17 @@
 }
 
 .auth-menu {
-  position: fixed;
-  top: 22px;
-  right: 24px;
+  position: relative;
   flex: 0 0 auto;
-  z-index: 1000;
+  z-index: 30;
 }
 
 .auth-user-button {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  min-width: 238px;
-  max-width: 320px;
+  min-width: 222px;
+  max-width: 300px;
   border: 1px solid rgba(148, 163, 184, 0.34);
   border-radius: 999px;
   padding: 8px 13px 8px 8px;
