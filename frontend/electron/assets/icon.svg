@@ -1,0 +1,38 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="128" y1="96" x2="896" y2="928" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22D3EE"/>
+      <stop offset="0.48" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#4C1D95"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="302" y1="214" x2="756" y2="804" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#D9E8FF"/>
+    </linearGradient>
+    <filter id="shadow" x="124" y="122" width="776" height="800" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="32"/>
+      <feGaussianBlur stdDeviation="42"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.020 0 0 0 0 0.024 0 0 0 0 0.052 0 0 0 0.32 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1_1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1_1" result="shape"/>
+    </filter>
+  </defs>
+
+  <rect x="64" y="64" width="896" height="896" rx="220" fill="url(#bg)"/>
+  <circle cx="232" cy="218" r="140" fill="white" fill-opacity="0.18"/>
+  <circle cx="792" cy="818" r="174" fill="#0F172A" fill-opacity="0.2"/>
+
+  <g filter="url(#shadow)">
+    <path d="M318 206H636L776 346V790C776 826.451 746.451 856 710 856H318C281.549 856 252 826.451 252 790V272C252 235.549 281.549 206 318 206Z" fill="url(#paper)"/>
+    <path d="M636 206V318C636 333.464 648.536 346 664 346H776L636 206Z" fill="#BFDBFE"/>
+    <path d="M342 404H682" stroke="#1E3A8A" stroke-width="42" stroke-linecap="round"/>
+    <path d="M342 512H628" stroke="#2563EB" stroke-width="42" stroke-linecap="round"/>
+    <path d="M342 620H582" stroke="#0891B2" stroke-width="42" stroke-linecap="round"/>
+  </g>
+
+  <circle cx="714" cy="704" r="106" fill="#0F172A"/>
+  <path d="M672 704H756" stroke="#67E8F9" stroke-width="34" stroke-linecap="round"/>
+  <path d="M714 662V746" stroke="#67E8F9" stroke-width="34" stroke-linecap="round"/>
+</svg>

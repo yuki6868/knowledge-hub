@@ -27,7 +27,7 @@
 - Supabase Auth
 - Supabase Realtime
 - PWA
-- Future: Electron
+- Electron Shell
 
 ## Development
 
@@ -134,6 +134,33 @@ VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_PUBLISHABLE_KEY
 - sync metadata
 
 通常の JSON Export はカード本文共有用、バックアップJSONは復旧・退避用です。
+
+
+## Electron Shell / Mac App
+
+commit030 で Vercel 本番URLを開く Mac アプリ用 Electron Shell を追加しています。
+
+```bash
+cd frontend
+npm install
+npm run electron:dev
+```
+
+ローカル開発中の Vite を包んで確認する場合は次のようにします。
+
+```bash
+cd frontend
+KNOWLEDGE_HUB_URL=http://localhost:5173 npm run electron:dev
+```
+
+dmg を作る場合は次です。
+
+```bash
+cd frontend
+npm run electron:dmg
+```
+
+詳細は `docs/electron-shell.md` を参照してください。
 
 ## PWA / iPhone
 

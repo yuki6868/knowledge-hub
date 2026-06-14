@@ -26,12 +26,24 @@ export function subscribeAuthState(listener: AuthListener): () => void {
   return () => data.subscription.unsubscribe()
 }
 
+const isElectronShell = (): boolean => {
+  return /Electron\//.test(window.navigator.userAgent)
+}
+
+const getAuthRedirectUrl = (): string => {
+  if (isElectronShell()) {
+    return 'knowledge-hub://auth/callback'
+  }
+
+  return window.location.origin
+}
+
 export async function signInWithGoogle(): Promise<void> {
   const client = requireSupabase()
   const { error } = await client.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: window.location.origin,
+      redirectTo: getAuthRedirectUrl(),
     },
   })
 
@@ -52,7 +64,7 @@ export async function signUpWithEmail(email: string, password: string): Promise<
     email,
     password,
     options: {
-      emailRedirectTo: window.location.origin,
+      emailRedirectTo: getAuthRedirectUrl(),
     },
   })
 

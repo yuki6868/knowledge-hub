@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "electron:dev": "npm run electron:icons && electron .",
+    "electron:pack": "npm run electron:icons && electron-builder --mac --dir",
+    "electron:dmg": "npm run electron:icons && electron-builder --mac dmg",
+    "electron:icons": "node scripts/generate-electron-icons.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.1",
@@ -26,9 +30,57 @@
     "globals": "^17.6.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
-    "vite": "^8.0.12"
+    "vite": "^8.0.12",
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12"
   },
   "engines": {
     "node": ">=20.19.0"
+  },
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "tech.ai-system-design.knowledge-hub",
+    "productName": "Knowledge Hub",
+    "copyright": "Copyright © 2026 yuki nakagawa",
+    "files": [
+      "electron/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg"
+      ],
+      "icon": "electron/assets/icon.icns"
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "icon": "electron/assets/icon.icns"
+    },
+    "artifactName": "Knowledge-Hub-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "extraMetadata": {
+      "main": "electron/main.cjs"
+    },
+    "protocols": [
+      {
+        "name": "Knowledge Hub Auth Callback",
+        "schemes": [
+          "knowledge-hub"
+        ]
+      }
+    ]
   }
 }

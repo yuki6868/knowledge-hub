@@ -5,3 +5,6 @@ dist
 .DS_Store
 *.log
 *.patch
+# Electron build artifacts
+frontend/dist/
+frontend/release/
