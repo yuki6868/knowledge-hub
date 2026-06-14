@@ -8,3 +8,4 @@ dist
 # Electron build artifacts
 frontend/dist/
 frontend/release/
+*.zip

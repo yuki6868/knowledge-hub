@@ -56,6 +56,14 @@ type BeforeInstallPromptEvent = Event & {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>
 }
 
+type DroppedFileImport = {
+  title: string
+  body: string
+  tagNames: string[]
+}
+
+type SupportedDroppedFileKind = 'markdown' | 'text' | 'image' | 'pdf'
+
 type SyncState = {
   status: SyncStatus
   realtimeStatus: RealtimeStatus
@@ -71,6 +79,36 @@ type StatusStep = {
 }
 
 const ACTIVE_CARD_STATUSES = CARD_STATUSES.filter((status) => status !== 'trash')
+
+const SUPPORTED_DROP_EXTENSIONS = new Set(['md', 'markdown', 'txt', 'png', 'jpg', 'jpeg', 'pdf'])
+
+const getDroppedFileExtension = (fileName: string) => {
+  const normalizedFileName = fileName.trim().toLowerCase()
+  const lastDotIndex = normalizedFileName.lastIndexOf('.')
+  return lastDotIndex >= 0 ? normalizedFileName.slice(lastDotIndex + 1) : ''
+}
+
+const getDroppedFileTitle = (fileName: string) => {
+  const lastDotIndex = fileName.lastIndexOf('.')
+  return lastDotIndex > 0 ? fileName.slice(0, lastDotIndex) : fileName
+}
+
+const getDroppedFileKind = (file: File): SupportedDroppedFileKind | null => {
+  const extension = getDroppedFileExtension(file.name)
+
+  if (extension === 'md' || extension === 'markdown') return 'markdown'
+  if (extension === 'txt') return 'text'
+  if (extension === 'png' || extension === 'jpg' || extension === 'jpeg') return 'image'
+  if (extension === 'pdf') return 'pdf'
+
+  return null
+}
+
+const formatDroppedFileSize = (size: number) => {
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
 
 const STATUS_FLOW: StatusStep[] = [
   { status: 'inbox', description: '最速メモの受け皿' },
@@ -583,6 +621,8 @@ function App() {
   const [quickMemoBody, setQuickMemoBody] = useState('')
   const [quickMemoSite, setQuickMemoSite] = useState<SiteType>('other')
   const [quickMemoTagsText, setQuickMemoTagsText] = useState('')
+  const [isFileDragOver, setIsFileDragOver] = useState(false)
+  const [importingFileCount, setImportingFileCount] = useState(0)
   const [draggingArticleCardId, setDraggingArticleCardId] = useState<string | null>(null)
   const [dragOverArticleStatus, setDragOverArticleStatus] = useState<CardStatus | null>(null)
   const [syncState, setSyncState] = useState<SyncState>(() => ({
@@ -1751,6 +1791,128 @@ function App() {
       event.preventDefault()
       void saveQuickMemo()
     }
+  }
+
+  const readDroppedFileAsCard = async (file: File): Promise<DroppedFileImport | null> => {
+    const kind = getDroppedFileKind(file)
+    if (!kind) return null
+
+    const title = getDroppedFileTitle(file.name) || '取り込みファイル'
+    const extension = getDroppedFileExtension(file.name)
+    const commonMeta = [
+      `ファイル名: ${file.name}`,
+      `種類: ${file.type || extension || 'unknown'}`,
+      `サイズ: ${formatDroppedFileSize(file.size)}`,
+      `取り込み日時: ${new Date().toLocaleString('ja-JP')}`,
+    ].join('\n')
+
+    if (kind === 'markdown' || kind === 'text') {
+      const text = await file.text()
+      return {
+        title,
+        body: text.trim() ? text : `# ${title}\n\n${commonMeta}`,
+        tagNames: [kind === 'markdown' ? 'markdown' : 'text', 'file-import'],
+      }
+    }
+
+    const displayKind = kind === 'image' ? '画像' : 'PDF'
+    return {
+      title,
+      body: [
+        `# ${title}`,
+        '',
+        `${displayKind}ファイルをFinderから取り込みました。`,
+        '',
+        commonMeta,
+        '',
+        '> 現時点ではファイル本体はSupabase Storageへアップロードせず、資料カードとしてメタ情報を保存します。',
+      ].join('\n'),
+      tagNames: [kind === 'image' ? 'image' : 'pdf', 'file-import'],
+    }
+  }
+
+  const importDroppedFiles = async (files: File[]) => {
+    const supportedFiles = files.filter((file) => SUPPORTED_DROP_EXTENSIONS.has(getDroppedFileExtension(file.name)))
+
+    if (supportedFiles.length === 0) {
+      setSyncError('対応しているファイルは md / txt / png / jpg / pdf です。')
+      return
+    }
+
+    setImportingFileCount(supportedFiles.length)
+    setSyncError(null)
+
+    try {
+      const imported = (await Promise.all(supportedFiles.map((file) => readDroppedFileAsCard(file))))
+        .filter((card): card is DroppedFileImport => Boolean(card))
+
+      if (imported.length === 0) {
+        setSyncError('取り込めるファイルがありませんでした。')
+        return
+      }
+
+      const now = new Date().toISOString()
+      const importedCards: CardWithTags[] = imported.map((item, index) => ({
+        id: createId('card'),
+        title: item.title || `取り込みファイル ${index + 1}`,
+        body: item.body,
+        site: 'other',
+        status: 'inbox',
+        created_at: now,
+        updated_at: now,
+        device_id: syncState.deviceId,
+        tags: parseTags(item.tagNames.join(',')),
+      }))
+      const nextCards = [...importedCards, ...cards]
+
+      setCards(nextCards)
+      setSelectedCardId(importedCards[0]?.id ?? null)
+      setEditorMode('new')
+      setForm(EMPTY_FORM)
+      setShowTrash(false)
+      setShowArticleBoard(false)
+      setShowDetail(false)
+      markLocalChange()
+
+      if (isSupabaseConfigured && activeUserId) {
+        await pushCardsToSupabase(nextCards, activeUserId)
+        setSyncState((current) => ({
+          ...current,
+          status: unresolvedConflicts.length > 0 ? 'conflict' : 'synced',
+          pendingCount: 0,
+          conflictCount: unresolvedConflicts.length,
+          lastSyncedAt: new Date().toISOString(),
+        }))
+        setSyncMessage(`${importedCards.length}件のファイルをカード化し、Supabaseへ同期しました。`)
+      } else {
+        setSyncMessage(`${importedCards.length}件のファイルをローカルにカード化しました。ログイン後にSupabaseへ同期できます。`)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'ファイル取り込みに失敗しました。'
+      setSyncError(message)
+    } finally {
+      setImportingFileCount(0)
+      setIsFileDragOver(false)
+    }
+  }
+
+  const handleAppDragOver = (event: DragEvent<HTMLElement>) => {
+    if (!Array.from(event.dataTransfer.types).includes('Files')) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    setIsFileDragOver(true)
+  }
+
+  const handleAppDragLeave = (event: DragEvent<HTMLElement>) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+    setIsFileDragOver(false)
+  }
+
+  const handleAppDrop = (event: DragEvent<HTMLElement>) => {
+    if (!Array.from(event.dataTransfer.types).includes('Files')) return
+    event.preventDefault()
+    setIsFileDragOver(false)
+    void importDroppedFiles(Array.from(event.dataTransfer.files))
   }
 
   const startNewCard = () => {
@@ -3217,8 +3379,22 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main
+      className={`app-shell ${isFileDragOver ? 'file-drop-active' : ''}`}
+      onDragOver={handleAppDragOver}
+      onDragLeave={handleAppDragLeave}
+      onDrop={handleAppDrop}
+    >
       {quickMemoModal}
+      {isFileDragOver || importingFileCount > 0 ? (
+        <div className="file-drop-overlay" aria-live="polite">
+          <div className="file-drop-card">
+            <span>📥</span>
+            <strong>{importingFileCount > 0 ? `${importingFileCount}件を取り込み中...` : 'Finderのファイルをカード化'}</strong>
+            <p>md / txt は本文として、png / jpg / pdf は資料カードとして inbox に保存します。</p>
+          </div>
+        </div>
+      ) : null}
       <header className="app-header">
         <div>
           <p className="eyebrow">Knowledge Hub</p>

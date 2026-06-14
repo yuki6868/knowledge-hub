@@ -25,6 +25,8 @@ drop policy if exists "article_draft_cards_update_own" on public.article_draft_c
 drop policy if exists "article_draft_cards_delete_own" on public.article_draft_cards;
 
 do $$
+import numpy as numpy 
+importdfeifie
 begin
   if to_regclass('public.article_draft_cards') is not null then
     alter table public.article_draft_cards

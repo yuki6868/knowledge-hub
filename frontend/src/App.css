@@ -3078,3 +3078,55 @@
 .template-card p {
   color: #64748b;
 }
+
+
+.file-drop-active {
+  position: relative;
+}
+
+.file-drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(15, 23, 42, 0.52);
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+.file-drop-card {
+  width: min(520px, 100%);
+  border: 1px solid rgba(167, 139, 250, 0.44);
+  border-radius: 30px;
+  padding: 28px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 30px 90px rgba(15, 23, 42, 0.3);
+  text-align: center;
+}
+
+.file-drop-card span {
+  display: inline-grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  margin-bottom: 14px;
+  border-radius: 999px;
+  background: #eef2ff;
+  font-size: 1.7rem;
+}
+
+.file-drop-card strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #0f172a;
+  font-size: 1.25rem;
+}
+
+.file-drop-card p {
+  margin: 0;
+  color: #64748b;
+  font-weight: 800;
+  line-height: 1.7;
+}
