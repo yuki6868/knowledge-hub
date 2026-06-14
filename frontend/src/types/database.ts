@@ -1,4 +1,4 @@
-import type { CardStatus, SiteType } from './knowledge'
+import type { ArticleStage, CardStatus, SiteType } from './knowledge'
 
 export type Json =
   | string
@@ -146,6 +146,105 @@ export type Database = {
           remote_body?: string | null
           created_at?: string
           resolved?: boolean
+        }
+        Relationships: []
+      }
+      article_templates: {
+        Row: {
+          id: string
+          user_id: string
+          name: string
+          site: SiteType
+          description: string
+          fields: Json
+          created_at: string
+          updated_at: string
+          device_id: string | null
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          name?: string
+          site?: SiteType
+          description?: string
+          fields?: Json
+          created_at?: string
+          updated_at?: string
+          device_id?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          name?: string
+          site?: SiteType
+          description?: string
+          fields?: Json
+          created_at?: string
+          updated_at?: string
+          device_id?: string | null
+        }
+        Relationships: []
+      }
+      article_drafts: {
+        Row: {
+          id: string
+          user_id: string
+          template_id: string | null
+          title: string
+          site: SiteType
+          stage: ArticleStage
+          summary: string
+          sections: Json
+          source_card_id: string | null
+          created_at: string
+          updated_at: string
+          device_id: string | null
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          template_id?: string | null
+          title?: string
+          site?: SiteType
+          stage?: ArticleStage
+          summary?: string
+          sections?: Json
+          source_card_id?: string | null
+          created_at?: string
+          updated_at?: string
+          device_id?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          template_id?: string | null
+          title?: string
+          site?: SiteType
+          stage?: ArticleStage
+          summary?: string
+          sections?: Json
+          source_card_id?: string | null
+          created_at?: string
+          updated_at?: string
+          device_id?: string | null
+        }
+        Relationships: []
+      }
+      article_draft_cards: {
+        Row: {
+          draft_id: string
+          card_id: string
+          position: number
+        }
+        Insert: {
+          draft_id: string
+          card_id: string
+          position?: number
+        }
+        Update: {
+          draft_id?: string
+          card_id?: string
+          position?: number
         }
         Relationships: []
       }

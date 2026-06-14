@@ -232,6 +232,56 @@ export async function pushCardsToSupabase(
   }
 }
 
+
+export async function permanentlyDeleteCardFromSupabase(
+  cardId: string,
+  userId: UserId,
+): Promise<void> {
+  if (!supabase) {
+    throw new Error("Supabase URL または anon key が設定されていません。");
+  }
+
+  const { error: articleDraftCardError } = await supabase
+    .from("article_draft_cards")
+    .delete()
+    .eq("card_id", cardId);
+  if (articleDraftCardError) throw articleDraftCardError;
+
+  const { error: articleDraftError } = await supabase
+    .from("article_drafts")
+    .update({ source_card_id: null })
+    .eq("source_card_id", cardId)
+    .eq("user_id", userId);
+  if (articleDraftError) throw articleDraftError;
+
+  const { error: cardTagError } = await supabase
+    .from("card_tags")
+    .delete()
+    .eq("card_id", cardId);
+  if (cardTagError) throw cardTagError;
+
+  const { error: historyError } = await supabase
+    .from("card_histories")
+    .delete()
+    .eq("card_id", cardId)
+    .eq("user_id", userId);
+  if (historyError) throw historyError;
+
+  const { error: conflictError } = await supabase
+    .from("conflicts")
+    .delete()
+    .eq("card_id", cardId)
+    .eq("user_id", userId);
+  if (conflictError) throw conflictError;
+
+  const { error: cardError } = await supabase
+    .from("cards")
+    .delete()
+    .eq("id", cardId)
+    .eq("user_id", userId);
+  if (cardError) throw cardError;
+}
+
 export async function pushCardHistoriesToSupabase(
   histories: CardHistory[],
   userId: UserId,

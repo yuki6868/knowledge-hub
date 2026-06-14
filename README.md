@@ -178,3 +178,60 @@ Knowledge Hub は PWA としてホーム画面追加に対応しています。
 - commit024: ユーザー別データ分離 / RLS
 - commit025: Vercel公開 / PWA確認 / バックアップ / iPhoneクイックメモ改善
 - commit026: 初期ダミーカード削除 / 空状態改善 / サンプルカード任意追加
+
+## commit027: テンプレート・記事候補ワークフロー
+
+Knowledge Hub は、単なる「タイトル＋本文」のメモ保管庫から、記事化のための作業台へ拡張しました。
+
+### 追加されたこと
+
+- テンプレート作成
+  - サイト別に記事テンプレートを作成できます。
+  - テンプレート項目は1行1項目で自由に定義できます。
+  - 標準テンプレートとして Note / AI設計ガイド / 世界遺産 の型を追加できます。
+- 記事候補作成
+  - 空の記事候補を作成できます。
+  - 既存カードから記事候補を作成できます。
+  - カードから作った場合、そのカードは素材カードとして自動でぶら下がります。
+- 素材カード管理
+  - 記事候補に複数カードを紐付けできます。
+  - 素材カードを見ながらテンプレート項目を埋められます。
+- 下書き化
+  - 記事候補を Markdown として出力できます。
+  - 記事候補から下書きカードを作成できます。
+
+### Supabase更新
+
+DB変更があります。Supabase の SQL Editor で以下を実行してください。
+
+```text
+supabase/migrations/004_article_templates_and_candidates.sql
+```
+
+追加テーブル:
+
+```text
+article_templates
+article_drafts
+article_draft_cards
+```
+
+RLS も migration 内で設定しています。ログインユーザーごとにテンプレート・記事候補・素材カード紐付けが分離されます。
+
+### Realtime
+
+テンプレート・記事候補は手動同期対象です。まずはカード本体のRealtimeと分けています。
+同期したい場合は、アプリ上の「Supabaseへ同期」「Supabaseから読込」を使います。
+
+
+### commit028: 記事候補・テンプレート永続化
+
+記事候補とテンプレートは、まずブラウザの `localStorage` に保存されます。
+そのため開発環境でページを更新しても、作成中の記事候補は消えません。
+ログイン済みの場合は、同期ボタンから Supabase の `article_templates` / `article_drafts` / `article_draft_cards` へ保存できます。
+
+commit027 の初期SQLで記事系IDを uuid にしていた環境では、Supabase SQL Editorで次を実行してください。
+
+```text
+supabase/migrations/005_article_workflow_text_ids_and_local_persistence.sql
+```

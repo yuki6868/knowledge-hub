@@ -7,7 +7,7 @@ import {
   SITE_TYPES,
 } from './constants/knowledge'
 import { createSampleCards } from './data/mockCards'
-import type { CardHistory, CardStatus, CardWithTags, Conflict, RelatedCardReason, SiteType, Tag } from './types/knowledge'
+import type { ArticleDraft, ArticleDraftSection, ArticleStage, ArticleTemplate, ArticleTemplateField, CardHistory, CardStatus, CardWithTags, Conflict, RelatedCardReason, SiteType, Tag } from './types/knowledge'
 import { getRelatedCards } from './utils/relatedCards'
 import { downloadCardAsJson, downloadCardsAsJsonBundle, downloadJsonFile } from './utils/jsonExport'
 import { downloadCardAsMarkdown, downloadCardsAsMarkdownBundle } from './utils/markdownExport'
@@ -27,12 +27,19 @@ import {
   fetchConflictsFromSupabase,
   insertCardHistoryToSupabase,
   insertConflictToSupabase,
+  permanentlyDeleteCardFromSupabase,
   pushCardHistoriesToSupabase,
   pushCardsToSupabase,
   pushConflictsToSupabase,
   resolveConflictInSupabase,
   subscribeCardsRealtime,
 } from './services/supabaseCards'
+import {
+  fetchArticleDraftsFromSupabase,
+  fetchArticleTemplatesFromSupabase,
+  pushArticleDraftsToSupabase,
+  pushArticleTemplatesToSupabase,
+} from './services/supabaseArticleWorkflow'
 import './App.css'
 
 type StatusFilter = CardStatus | 'all'
@@ -41,6 +48,7 @@ type TagFilter = string | 'all'
 type TagSortMode = 'count' | 'name'
 type EditorMode = 'new' | 'edit'
 type AuthMode = 'login' | 'signup'
+type ArticleStudioTab = 'drafts' | 'templates'
 type SyncStatus = 'synced' | 'pending' | 'conflict' | 'syncing'
 type RealtimeStatus = 'disabled' | 'connecting' | 'connected' | 'disconnected' | 'error'
 type BeforeInstallPromptEvent = Event & {
@@ -71,6 +79,58 @@ const STATUS_FLOW: StatusStep[] = [
   { status: 'draft', description: '下書き作成中' },
   { status: 'published', description: '公開済み' },
   { status: 'archived', description: '保管・参照用' },
+]
+
+const ARTICLE_STAGE_LABELS: Record<ArticleStage, string> = {
+  candidate: '記事候補',
+  draft: '下書き',
+  published: '公開済み',
+  archived: '保管',
+}
+
+const DEFAULT_TEMPLATE_PRESETS: Array<{
+  name: string
+  site: SiteType
+  description: string
+  fields: Array<Omit<ArticleTemplateField, 'id'>>
+}> = [
+  {
+    name: 'Note 深掘り記事',
+    site: 'note',
+    description: '出来事・解釈・学び・行動まで埋めて、日記や有料記事の元にするテンプレート。',
+    fields: [
+      { label: '結論', helpText: 'この記事で一番伝えたいこと。', placeholder: '最初に読者へ渡す答えを書く。' },
+      { label: 'きっかけ', helpText: '元になったメモ・体験・違和感。', placeholder: '何があってこのテーマを考えたのか。' },
+      { label: '自分の解釈', helpText: '単なる事実ではなく、自分なりの見方。', placeholder: 'どう捉え直したか。' },
+      { label: '具体例', helpText: '読者がイメージできる例。', placeholder: '会計士学習、個人開発、生活など。' },
+      { label: '読者の行動', helpText: '読んだ後にしてほしいこと。', placeholder: '今日からできる小さい行動を書く。' },
+    ],
+  },
+  {
+    name: 'AI設計ガイド記事',
+    site: 'ai-system-design',
+    description: '問題提起から設計方針、実装判断、落とし穴まで整理するテンプレート。',
+    fields: [
+      { label: '結論', helpText: '設計としての主張。', placeholder: 'この設計では何を優先するのか。' },
+      { label: '背景', helpText: 'なぜその問題が起きるのか。', placeholder: 'AI時代の開発でありがちな状況を書く。' },
+      { label: '問題', helpText: '放置すると何が壊れるか。', placeholder: '責務混在、保守不能、同期事故など。' },
+      { label: '設計方針', helpText: 'どう分け、どう管理するか。', placeholder: '責務・データ・UI・同期の判断を書く。' },
+      { label: '具体例', helpText: '実装や画面での例。', placeholder: 'Knowledge Hubや他アプリでの例を書く。' },
+      { label: 'まとめ', helpText: '読者に残す一文。', placeholder: '最後に覚えてほしいことを書く。' },
+    ],
+  },
+  {
+    name: '世界遺産紹介記事',
+    site: 'world-heritage',
+    description: '概要・歴史・見どころ・行き方・感想をまとめるテンプレート。',
+    fields: [
+      { label: '概要', helpText: '何の世界遺産か。', placeholder: '登録名、国、特徴を書く。' },
+      { label: '歴史', helpText: '背景となる歴史。', placeholder: 'いつ、なぜ重要になったか。' },
+      { label: '見どころ', helpText: '読者が見たいポイント。', placeholder: '建物、自然、景観、物語を書く。' },
+      { label: 'アクセス', helpText: '旅行記事として必要な導線。', placeholder: '行き方、所要時間、注意点を書く。' },
+      { label: '感想・考察', helpText: '自分のサイトとしての価値。', placeholder: '単なる情報ではなく、自分の見方を書く。' },
+    ],
+  },
 ]
 
 function getNextStatus(status: CardStatus): CardStatus | null {
@@ -160,6 +220,67 @@ function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+function createTemplateField(label: string, helpText = '', placeholder = ''): ArticleTemplateField {
+  return {
+    id: createId('field'),
+    label: label.trim() || '未命名セクション',
+    helpText,
+    placeholder,
+  }
+}
+
+function createDefaultArticleTemplates(deviceId: string): ArticleTemplate[] {
+  const now = new Date().toISOString()
+  return DEFAULT_TEMPLATE_PRESETS.map((preset) => ({
+    id: createId('template'),
+    name: preset.name,
+    site: preset.site,
+    description: preset.description,
+    fields: preset.fields.map((field) => createTemplateField(field.label, field.helpText, field.placeholder)),
+    created_at: now,
+    updated_at: now,
+    device_id: deviceId,
+  }))
+}
+
+function buildSectionsFromTemplate(template: ArticleTemplate, sourceCard?: CardWithTags | null): ArticleDraftSection[] {
+  return template.fields.map((field) => {
+    const label = field.label.toLowerCase()
+    const sourceText = sourceCard ? `# ${sourceCard.title || '無題のカード'}
+
+${sourceCard.body}` : ''
+    const content = sourceCard && (label.includes('きっかけ') || label.includes('素材') || label.includes('概要'))
+      ? sourceText
+      : sourceCard && label.includes('具体')
+        ? sourceCard.body
+        : sourceCard && label.includes('結論')
+          ? getPreview(sourceCard.body)
+          : ''
+
+    return {
+      field_id: field.id,
+      label: field.label,
+      content,
+    }
+  })
+}
+
+function renderArticleDraftMarkdown(draft: ArticleDraft, cardsById: Map<string, CardWithTags>): string {
+  const sourceCards = draft.attached_card_ids
+    .map((cardId) => cardsById.get(cardId))
+    .filter((card): card is CardWithTags => Boolean(card))
+
+  const sections = draft.sections
+    .map((section) => `## ${section.label}\n\n${section.content.trim() || '<!-- 未記入 -->'}`)
+    .join('\n\n')
+
+  const sources = sourceCards.length > 0
+    ? `\n\n---\n\n## 素材カード\n\n${sourceCards.map((card) => `- ${card.title || '無題のカード'}（${SITE_TYPE_LABELS[card.site]} / ${CARD_STATUS_LABELS[card.status]}）`).join('\n')}`
+    : ''
+
+  return `# ${draft.title || '無題の記事候補'}\n\n${draft.summary.trim() ? `${draft.summary.trim()}\n\n` : ''}${sections}${sources}\n`
+}
+
 function getOrCreateDeviceId(): string {
   const storageKey = 'knowledge-hub-device-id'
   const current = window.localStorage.getItem(storageKey)
@@ -168,6 +289,137 @@ function getOrCreateDeviceId(): string {
   const next = `device-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   window.localStorage.setItem(storageKey, next)
   return next
+}
+
+
+const ARTICLE_WORKFLOW_STORAGE_KEY = 'knowledge-hub-article-workflow-v1'
+
+type StoredArticleWorkflow = {
+  article_templates?: ArticleTemplate[]
+  article_drafts?: ArticleDraft[]
+}
+
+function loadStoredArticleWorkflow(): StoredArticleWorkflow {
+  try {
+    const raw = window.localStorage.getItem(ARTICLE_WORKFLOW_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as StoredArticleWorkflow
+    return {
+      article_templates: Array.isArray(parsed.article_templates) ? parsed.article_templates : [],
+      article_drafts: Array.isArray(parsed.article_drafts) ? parsed.article_drafts : [],
+    }
+  } catch (error) {
+    console.warn('記事候補のローカル保存データを読み込めませんでした。', error)
+    return {}
+  }
+}
+
+function persistArticleWorkflowToStorage(articleTemplates: ArticleTemplate[], articleDrafts: ArticleDraft[]): void {
+  try {
+    const payload: StoredArticleWorkflow = {
+      article_templates: articleTemplates,
+      article_drafts: articleDrafts,
+    }
+    window.localStorage.setItem(ARTICLE_WORKFLOW_STORAGE_KEY, JSON.stringify(payload))
+  } catch (error) {
+    console.warn('記事候補のローカル保存に失敗しました。', error)
+  }
+}
+
+const KNOWLEDGE_CARDS_STORAGE_KEY = 'knowledge-hub-cards-v1'
+
+type StoredKnowledgeCards = {
+  cards?: CardWithTags[]
+  card_histories?: CardHistory[]
+  conflicts?: Conflict[]
+}
+
+function loadStoredKnowledgeCards(): StoredKnowledgeCards {
+  try {
+    const raw = window.localStorage.getItem(KNOWLEDGE_CARDS_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as StoredKnowledgeCards
+    return {
+      cards: Array.isArray(parsed.cards) ? parsed.cards : [],
+      card_histories: Array.isArray(parsed.card_histories) ? parsed.card_histories : [],
+      conflicts: Array.isArray(parsed.conflicts) ? parsed.conflicts : [],
+    }
+  } catch (error) {
+    console.warn('カード一覧のローカル保存データを読み込めませんでした。', error)
+    return {}
+  }
+}
+
+function persistKnowledgeCardsToStorage(cards: CardWithTags[], cardHistories: CardHistory[], conflicts: Conflict[]): void {
+  try {
+    const payload: StoredKnowledgeCards = {
+      cards,
+      card_histories: cardHistories,
+      conflicts,
+    }
+    window.localStorage.setItem(KNOWLEDGE_CARDS_STORAGE_KEY, JSON.stringify(payload))
+  } catch (error) {
+    console.warn('カード一覧のローカル保存に失敗しました。', error)
+  }
+}
+
+function mergeCardsByUpdatedAt(localCards: CardWithTags[], remoteCards: CardWithTags[]): CardWithTags[] {
+  const merged = new Map<string, CardWithTags>()
+
+  remoteCards.forEach((card) => merged.set(card.id, card))
+  localCards.forEach((card) => {
+    const current = merged.get(card.id)
+    if (!current || newerIso(card.updated_at, current.updated_at)) {
+      merged.set(card.id, card)
+    }
+  })
+
+  return Array.from(merged.values()).sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+}
+
+function mergeCardHistories(...historyGroups: CardHistory[][]): CardHistory[] {
+  const merged = new Map<string, CardHistory>()
+
+  historyGroups.flat().forEach((history) => {
+    merged.set(history.id, history)
+  })
+
+  return Array.from(merged.values()).sort((a, b) => b.saved_at.localeCompare(a.saved_at))
+}
+
+
+function newerIso(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a) return false
+  if (!b) return true
+  return a > b
+}
+
+function mergeArticleTemplates(localTemplates: ArticleTemplate[], remoteTemplates: ArticleTemplate[]): ArticleTemplate[] {
+  const merged = new Map<string, ArticleTemplate>()
+
+  remoteTemplates.forEach((template) => merged.set(template.id, template))
+  localTemplates.forEach((template) => {
+    const current = merged.get(template.id)
+    if (!current || newerIso(template.updated_at, current.updated_at)) {
+      merged.set(template.id, template)
+    }
+  })
+
+  return Array.from(merged.values()).sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+}
+
+function mergeArticleDrafts(localDrafts: ArticleDraft[], remoteDrafts: ArticleDraft[]): ArticleDraft[] {
+  const merged = new Map<string, ArticleDraft>()
+
+  remoteDrafts.forEach((draft) => merged.set(draft.id, draft))
+  localDrafts.forEach((draft) => {
+    const current = merged.get(draft.id)
+    if (!current || newerIso(draft.updated_at, current.updated_at)) {
+      merged.set(draft.id, draft)
+    }
+  })
+
+  return Array.from(merged.values()).sort((a, b) => b.updated_at.localeCompare(a.updated_at))
 }
 
 function normalizeTagName(value: string): string {
@@ -268,9 +520,10 @@ function toFormState(card: CardWithTags): CardFormState {
 }
 
 function App() {
-  const [cards, setCards] = useState<CardWithTags[]>([])
-  const [cardHistories, setCardHistories] = useState<CardHistory[]>([])
-  const [conflicts, setConflicts] = useState<Conflict[]>([])
+  const storedKnowledgeCards = useMemo(() => loadStoredKnowledgeCards(), [])
+  const [cards, setCards] = useState<CardWithTags[]>(() => storedKnowledgeCards.cards ?? [])
+  const [cardHistories, setCardHistories] = useState<CardHistory[]>(() => storedKnowledgeCards.card_histories ?? [])
+  const [conflicts, setConflicts] = useState<Conflict[]>(() => storedKnowledgeCards.conflicts ?? [])
   const [selectedConflictId, setSelectedConflictId] = useState<string | null>(null)
   const [searchText, setSearchText] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
@@ -280,6 +533,16 @@ function App() {
   const [tagSortMode, setTagSortMode] = useState<TagSortMode>('count')
   const [showTrash, setShowTrash] = useState(false)
   const [showArticleBoard, setShowArticleBoard] = useState(false)
+  const [showArticleStudio, setShowArticleStudio] = useState(false)
+  const [articleStudioTab, setArticleStudioTab] = useState<ArticleStudioTab>('drafts')
+  const [articleTemplates, setArticleTemplates] = useState<ArticleTemplate[]>(() => loadStoredArticleWorkflow().article_templates ?? [])
+  const [articleDrafts, setArticleDrafts] = useState<ArticleDraft[]>(() => loadStoredArticleWorkflow().article_drafts ?? [])
+  const [selectedArticleDraftId, setSelectedArticleDraftId] = useState<string | null>(null)
+  const [selectedArticleTemplateId, setSelectedArticleTemplateId] = useState<string | null>(null)
+  const [templateName, setTemplateName] = useState('')
+  const [templateSite, setTemplateSite] = useState<SiteType>('note')
+  const [templateDescription, setTemplateDescription] = useState('')
+  const [templateFieldsText, setTemplateFieldsText] = useState('結論\n背景\n問題\n具体例\nまとめ')
   const [showDetail, setShowDetail] = useState(false)
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
   const [exportCardIds, setExportCardIds] = useState<string[]>([])
@@ -314,6 +577,14 @@ function App() {
   const syncStateRef = useRef(syncState)
   const cardsRef = useRef(cards)
   const conflictsRef = useRef(conflicts)
+  const articleTemplatesRef = useRef(articleTemplates)
+  const articleDraftsRef = useRef(articleDrafts)
+  const articleWorkflowAutoSyncTimerRef = useRef<number | null>(null)
+  const articleWorkflowLoadedUserIdRef = useRef<string | null>(null)
+  const isApplyingRemoteArticleWorkflowRef = useRef(false)
+  const cardsAutoSyncTimerRef = useRef<number | null>(null)
+  const cardsLoadedUserIdRef = useRef<string | null>(null)
+  const isApplyingRemoteCardsRef = useRef(false)
   const activeUserId = session?.user.id ?? null
 
   const selectedCard = useMemo(() => {
@@ -346,6 +617,16 @@ function App() {
     if (!selectedConflict) return null
     return cards.find((card) => card.id === selectedConflict.card_id) ?? null
   }, [cards, selectedConflict])
+
+  const selectedArticleDraft = useMemo(() => {
+    return articleDrafts.find((draft) => draft.id === selectedArticleDraftId) ?? articleDrafts[0] ?? null
+  }, [articleDrafts, selectedArticleDraftId])
+
+  const selectedArticleTemplate = useMemo(() => {
+    return articleTemplates.find((template) => template.id === selectedArticleTemplateId) ?? articleTemplates[0] ?? null
+  }, [articleTemplates, selectedArticleTemplateId])
+
+  const cardsById = useMemo(() => new Map(cards.map((card) => [card.id, card])), [cards])
 
   useEffect(() => {
     if (!syncMessage && !syncError) return
@@ -437,6 +718,211 @@ function App() {
   }, [conflicts])
 
   useEffect(() => {
+    articleTemplatesRef.current = articleTemplates
+  }, [articleTemplates])
+
+  useEffect(() => {
+    articleDraftsRef.current = articleDrafts
+  }, [articleDrafts])
+
+  useEffect(() => {
+    persistArticleWorkflowToStorage(articleTemplates, articleDrafts)
+  }, [articleTemplates, articleDrafts])
+
+  useEffect(() => {
+    persistKnowledgeCardsToStorage(cards, cardHistories, conflicts)
+  }, [cards, cardHistories, conflicts])
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !activeUserId) return
+    if (cardsLoadedUserIdRef.current === activeUserId) return
+
+    let cancelled = false
+    cardsLoadedUserIdRef.current = activeUserId
+    isApplyingRemoteCardsRef.current = true
+
+    Promise.all([
+      fetchCardsFromSupabase(activeUserId),
+      fetchCardHistoriesFromSupabase(activeUserId),
+      fetchConflictsFromSupabase(activeUserId),
+    ])
+      .then(([remoteCards, remoteHistories, remoteConflicts]) => {
+        if (cancelled) return
+
+        const nextCards = mergeCardsByUpdatedAt(cardsRef.current, remoteCards)
+        const nextHistories = mergeCardHistories(cardHistories, remoteHistories)
+        const nextConflicts = mergeConflicts(conflictsRef.current, remoteConflicts)
+        const nextConflictCount = nextConflicts.filter((conflict) => !conflict.resolved).length
+
+        setCards(nextCards)
+        setCardHistories(nextHistories)
+        setConflicts(nextConflicts)
+        setSelectedConflictId((current) => current ?? nextConflicts.find((conflict) => !conflict.resolved)?.id ?? null)
+        setSyncState((current) => ({
+          ...current,
+          status: nextConflictCount > 0 ? 'conflict' : 'synced',
+          pendingCount: 0,
+          conflictCount: nextConflictCount,
+          lastSyncedAt: new Date().toISOString(),
+        }))
+
+        if (remoteCards.length > 0 || cardsRef.current.length > 0) {
+          setSyncMessage(`カード${remoteCards.length}件をSupabaseから読み込み、ローカルカード${cardsRef.current.length}件と統合しました。`)
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return
+        const message = error instanceof Error ? error.message : 'カード一覧の読み込みに失敗しました。'
+        setSyncError(message)
+      })
+      .finally(() => {
+        window.setTimeout(() => {
+          if (!cancelled) isApplyingRemoteCardsRef.current = false
+        }, 0)
+      })
+
+    return () => {
+      cancelled = true
+      isApplyingRemoteCardsRef.current = false
+    }
+  }, [activeUserId, cardHistories])
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !activeUserId) return
+    if (isApplyingRemoteCardsRef.current) return
+    if (cardsLoadedUserIdRef.current !== activeUserId) return
+
+    if (cardsAutoSyncTimerRef.current) {
+      window.clearTimeout(cardsAutoSyncTimerRef.current)
+    }
+
+    const cardsSnapshot = cards
+    const historiesSnapshot = cardHistories
+    const conflictsSnapshot = conflicts
+
+    cardsAutoSyncTimerRef.current = window.setTimeout(() => {
+      void Promise.all([
+        pushCardsToSupabase(cardsSnapshot, activeUserId),
+        pushCardHistoriesToSupabase(historiesSnapshot, activeUserId),
+        pushConflictsToSupabase(conflictsSnapshot, activeUserId),
+      ])
+        .then(() => {
+          setSyncState((current) => ({
+            ...current,
+            status: unresolvedConflicts.length > 0 ? 'conflict' : 'synced',
+            pendingCount: 0,
+            conflictCount: unresolvedConflicts.length,
+            lastSyncedAt: new Date().toISOString(),
+          }))
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : 'カード一覧のSupabase自動保存に失敗しました。'
+          setSyncError(message)
+          setSyncState((current) => ({
+            ...current,
+            status: 'pending',
+            pendingCount: Math.max(current.pendingCount, 1),
+          }))
+        })
+    }, 800)
+
+    return () => {
+      if (cardsAutoSyncTimerRef.current) {
+        window.clearTimeout(cardsAutoSyncTimerRef.current)
+        cardsAutoSyncTimerRef.current = null
+      }
+    }
+  }, [activeUserId, cards, cardHistories, conflicts, unresolvedConflicts.length])
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !activeUserId) return
+    if (articleWorkflowLoadedUserIdRef.current === activeUserId) return
+
+    let cancelled = false
+    articleWorkflowLoadedUserIdRef.current = activeUserId
+    isApplyingRemoteArticleWorkflowRef.current = true
+
+    Promise.all([
+      fetchArticleTemplatesFromSupabase(activeUserId),
+      fetchArticleDraftsFromSupabase(activeUserId),
+    ])
+      .then(([remoteTemplates, remoteDrafts]) => {
+        if (cancelled) return
+
+        const nextTemplates = mergeArticleTemplates(articleTemplatesRef.current, remoteTemplates)
+        const nextDrafts = mergeArticleDrafts(articleDraftsRef.current, remoteDrafts)
+        setArticleTemplates(nextTemplates)
+        setArticleDrafts(nextDrafts)
+        setSelectedArticleTemplateId((current) => current ?? nextTemplates[0]?.id ?? null)
+        setSelectedArticleDraftId((current) => current ?? nextDrafts[0]?.id ?? null)
+
+        if (remoteTemplates.length > 0 || remoteDrafts.length > 0) {
+          setSyncMessage(`記事テンプレート${remoteTemplates.length}件・記事候補${remoteDrafts.length}件をSupabaseから読み込みました。`)
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return
+        const message = error instanceof Error ? error.message : '記事テンプレート・記事候補の読み込みに失敗しました。'
+        setSyncError(message)
+      })
+      .finally(() => {
+        window.setTimeout(() => {
+          if (!cancelled) isApplyingRemoteArticleWorkflowRef.current = false
+        }, 0)
+      })
+
+    return () => {
+      cancelled = true
+      isApplyingRemoteArticleWorkflowRef.current = false
+    }
+  }, [activeUserId])
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !activeUserId) return
+    if (isApplyingRemoteArticleWorkflowRef.current) return
+
+    if (articleWorkflowAutoSyncTimerRef.current) {
+      window.clearTimeout(articleWorkflowAutoSyncTimerRef.current)
+    }
+
+    const templatesSnapshot = articleTemplates
+    const draftsSnapshot = articleDrafts
+
+    articleWorkflowAutoSyncTimerRef.current = window.setTimeout(() => {
+      void Promise.all([
+        pushArticleTemplatesToSupabase(templatesSnapshot, activeUserId),
+        pushArticleDraftsToSupabase(draftsSnapshot, activeUserId),
+      ])
+        .then(() => {
+          setSyncState((current) => ({
+            ...current,
+            status: unresolvedConflicts.length > 0 ? 'conflict' : 'synced',
+            pendingCount: 0,
+            conflictCount: unresolvedConflicts.length,
+            lastSyncedAt: new Date().toISOString(),
+          }))
+          setSyncMessage(`記事テンプレート${templatesSnapshot.length}件・記事候補${draftsSnapshot.length}件をSupabaseへ自動保存しました。`)
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : '記事テンプレート・記事候補のSupabase自動保存に失敗しました。'
+          setSyncError(message)
+          setSyncState((current) => ({
+            ...current,
+            status: 'pending',
+            pendingCount: Math.max(current.pendingCount, 1),
+          }))
+        })
+    }, 800)
+
+    return () => {
+      if (articleWorkflowAutoSyncTimerRef.current) {
+        window.clearTimeout(articleWorkflowAutoSyncTimerRef.current)
+        articleWorkflowAutoSyncTimerRef.current = null
+      }
+    }
+  }, [activeUserId, articleTemplates, articleDrafts, unresolvedConflicts.length])
+
+  useEffect(() => {
     if (!isSupabaseConfigured || !activeUserId) {
       setSyncState((current) => ({ ...current, realtimeStatus: 'disabled' }))
       return
@@ -511,6 +997,30 @@ function App() {
     }))
   }
 
+
+  const removeDeletedCardsFromArticleDrafts = (deletedCardIds: Set<string>) => {
+    if (deletedCardIds.size === 0) return
+
+    const now = new Date().toISOString()
+    setArticleDrafts((current) =>
+      current.map((draft) => {
+        const nextAttachedCardIds = draft.attached_card_ids.filter((id) => !deletedCardIds.has(id))
+        const nextSourceCardId = draft.source_card_id && deletedCardIds.has(draft.source_card_id) ? null : draft.source_card_id
+
+        if (nextSourceCardId === draft.source_card_id && nextAttachedCardIds.length === draft.attached_card_ids.length) {
+          return draft
+        }
+
+        return {
+          ...draft,
+          source_card_id: nextSourceCardId,
+          attached_card_ids: nextAttachedCardIds,
+          updated_at: now,
+        }
+      }),
+    )
+  }
+
   const markSynced = () => {
     setSyncState((current) => ({
       ...current,
@@ -532,21 +1042,29 @@ function App() {
     setSyncState((current) => ({ ...current, status: 'syncing' }))
 
     try {
-      const [remoteCards, remoteHistories, remoteConflicts] = await Promise.all([
+      const [remoteCards, remoteHistories, remoteConflicts, remoteTemplates, remoteDrafts] = await Promise.all([
         fetchCardsFromSupabase(activeUserId),
         fetchCardHistoriesFromSupabase(activeUserId),
         fetchConflictsFromSupabase(activeUserId),
+        fetchArticleTemplatesFromSupabase(activeUserId),
+        fetchArticleDraftsFromSupabase(activeUserId),
       ])
       setCards(remoteCards)
       setCardHistories(remoteHistories)
       const nextConflicts = mergeConflicts(remoteConflicts)
       const nextConflictCount = nextConflicts.filter((conflict) => !conflict.resolved).length
       setConflicts(nextConflicts)
+      setArticleTemplates(remoteTemplates)
+      setArticleDrafts(remoteDrafts)
+      setSelectedArticleTemplateId(remoteTemplates[0]?.id ?? null)
+      setSelectedArticleDraftId(remoteDrafts[0]?.id ?? null)
       setSelectedConflictId(nextConflicts.find((conflict) => !conflict.resolved)?.id ?? null)
       setSelectedCardId(null)
       setShowDetail(false)
       setShowTrash(false)
       setShowArticleBoard(false)
+      setShowArticleStudio(false)
+      setShowArticleStudio(false)
       setExportCardIds([])
       setSyncState((current) => ({
         ...current,
@@ -555,7 +1073,7 @@ function App() {
         conflictCount: unresolvedConflicts.length,
         lastSyncedAt: new Date().toISOString(),
       }))
-      setSyncMessage(`Supabaseからカード${remoteCards.length}件・履歴${remoteHistories.length}件・競合${nextConflictCount}件を読み込みました。`)
+      setSyncMessage(`Supabaseからカード${remoteCards.length}件・履歴${remoteHistories.length}件・競合${nextConflictCount}件・テンプレート${remoteTemplates.length}件・記事候補${remoteDrafts.length}件を読み込みました。`)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Supabaseからの読み込みに失敗しました。'
       setSyncError(message)
@@ -581,6 +1099,8 @@ function App() {
         pushCardsToSupabase(cards, activeUserId),
         pushCardHistoriesToSupabase(cardHistories, activeUserId),
         pushConflictsToSupabase(conflicts, activeUserId),
+        pushArticleTemplatesToSupabase(articleTemplates, activeUserId),
+        pushArticleDraftsToSupabase(articleDrafts, activeUserId),
       ])
       setSyncState((current) => ({
         ...current,
@@ -589,7 +1109,7 @@ function App() {
         conflictCount: unresolvedConflicts.length,
         lastSyncedAt: new Date().toISOString(),
       }))
-      setSyncMessage(`Supabaseへカード${cards.length}件・履歴${cardHistories.length}件・競合${conflicts.length}件を同期しました。`)
+      setSyncMessage(`Supabaseへカード${cards.length}件・履歴${cardHistories.length}件・競合${conflicts.length}件・テンプレート${articleTemplates.length}件・記事候補${articleDrafts.length}件を同期しました。`)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Supabaseへの同期に失敗しました。'
       setSyncError(message)
@@ -929,6 +1449,10 @@ function App() {
       setCards([])
       setCardHistories([])
       setConflicts([])
+      setArticleTemplates([])
+      setArticleDrafts([])
+      setSelectedArticleDraftId(null)
+      setSelectedArticleTemplateId(null)
       setSelectedCardId(null)
       setSelectedConflictId(null)
       setShowDetail(false)
@@ -1285,6 +1809,8 @@ function App() {
         cards: cards.length,
         histories: cardHistories.length,
         conflicts: conflicts.length,
+        article_templates: articleTemplates.length,
+        article_drafts: articleDrafts.length,
       },
       sync: {
         last_synced_at: syncState.lastSyncedAt,
@@ -1296,6 +1822,8 @@ function App() {
         cards,
         card_histories: cardHistories,
         card_conflicts: conflicts,
+        article_templates: articleTemplates,
+        article_drafts: articleDrafts,
       },
     }
 
@@ -1475,7 +2003,7 @@ function App() {
     // 全件復元後も勝手にカード一覧へ戻らない。
   }
 
-  const emptyTrash = () => {
+  const emptyTrash = async () => {
     if (trashCount === 0) return
 
     const ok = window.confirm(
@@ -1484,7 +2012,26 @@ function App() {
     if (!ok) return
 
     const trashIds = new Set(trashCards.map((card) => card.id))
+
+    if (isSupabaseConfigured && activeUserId) {
+      setSyncError(null)
+      setSyncMessage('ゴミ箱内のカードをSupabaseから完全削除しています...')
+
+      try {
+        await Promise.all(
+          Array.from(trashIds).map((cardId) => permanentlyDeleteCardFromSupabase(cardId, activeUserId)),
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'ゴミ箱内カードのSupabase完全削除に失敗しました。'
+        setSyncError(message)
+        return
+      }
+    }
+
     setCards((current) => current.filter((card) => card.status !== 'trash'))
+    setCardHistories((current) => current.filter((history) => !trashIds.has(history.card_id)))
+    setConflicts((current) => current.filter((conflict) => !trashIds.has(conflict.card_id)))
+    removeDeletedCardsFromArticleDrafts(trashIds)
 
     if (selectedCardId && trashIds.has(selectedCardId)) {
       setSelectedCardId(null)
@@ -1493,14 +2040,31 @@ function App() {
       setForm(EMPTY_FORM)
     }
     markLocalChange()
+    setSyncMessage(`ゴミ箱内の${trashIds.size}件を完全削除しました。`)
   }
 
-  const permanentlyDeleteCard = (cardId: string) => {
+  const permanentlyDeleteCard = async (cardId: string) => {
     const ok = window.confirm('このカードを完全削除します。復元できません。')
     if (!ok) return
 
+    if (isSupabaseConfigured && activeUserId) {
+      setSyncError(null)
+      setSyncMessage('カードをSupabaseから完全削除しています...')
+
+      try {
+        await permanentlyDeleteCardFromSupabase(cardId, activeUserId)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'カードのSupabase完全削除に失敗しました。'
+        setSyncError(message)
+        return
+      }
+    }
+
+    const deletedCardIds = new Set([cardId])
     setCards((current) => current.filter((card) => card.id !== cardId))
     setCardHistories((current) => current.filter((history) => history.card_id !== cardId))
+    setConflicts((current) => current.filter((conflict) => conflict.card_id !== cardId))
+    removeDeletedCardsFromArticleDrafts(deletedCardIds)
     if (selectedCardId === cardId) {
       setSelectedCardId(null)
       setShowDetail(false)
@@ -1508,6 +2072,7 @@ function App() {
       setForm(EMPTY_FORM)
     }
     markLocalChange()
+    setSyncMessage('カードを完全削除しました。')
   }
 
   const restoreHistoryToForm = (history: CardHistory) => {
@@ -1517,6 +2082,206 @@ function App() {
       body: history.body,
     }))
     setSyncMessage('履歴の内容をフォームへ戻しました。保存すると現在版として反映されます。')
+  }
+
+
+  const openArticleStudio = () => {
+    setShowArticleStudio(true)
+    setShowArticleBoard(false)
+    setShowTrash(false)
+    setShowDetail(false)
+  }
+
+  const closeArticleStudio = () => {
+    setShowArticleStudio(false)
+  }
+
+  const addDefaultTemplates = () => {
+    const defaults = createDefaultArticleTemplates(syncState.deviceId)
+    const existingNames = new Set(articleTemplates.map((template) => template.name))
+    const nextDefaults = defaults.filter((template) => !existingNames.has(template.name))
+
+    if (nextDefaults.length === 0) {
+      setSyncMessage('標準テンプレートはすでに追加済みです。')
+      return
+    }
+
+    setArticleTemplates((current) => [...nextDefaults, ...current])
+    setSelectedArticleTemplateId(nextDefaults[0]?.id ?? null)
+    markLocalChange()
+    setSyncMessage(`標準テンプレート${nextDefaults.length}件を追加しました。ログイン中はSupabaseへ自動保存されます。`)
+  }
+
+  const saveArticleTemplate = () => {
+    const now = new Date().toISOString()
+    const fields = templateFieldsText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((label) => createTemplateField(label))
+
+    if (!templateName.trim()) {
+      setSyncError('テンプレート名を入力してください。')
+      return
+    }
+
+    if (fields.length === 0) {
+      setSyncError('テンプレート項目を1つ以上入力してください。')
+      return
+    }
+
+    const template: ArticleTemplate = {
+      id: createId('template'),
+      name: templateName.trim(),
+      site: templateSite,
+      description: templateDescription.trim(),
+      fields,
+      created_at: now,
+      updated_at: now,
+      device_id: syncState.deviceId,
+    }
+
+    setArticleTemplates((current) => [template, ...current])
+    setSelectedArticleTemplateId(template.id)
+    setTemplateName('')
+    setTemplateDescription('')
+    setTemplateFieldsText('結論\n背景\n問題\n具体例\nまとめ')
+    markLocalChange()
+    setSyncMessage('テンプレートを作成しました。ログイン中はSupabaseへ自動保存されます。')
+  }
+
+  const deleteArticleTemplate = (templateId: string) => {
+    const used = articleDrafts.some((draft) => draft.template_id === templateId)
+    const ok = window.confirm(used ? 'このテンプレートを使った記事候補があります。テンプレートだけ削除しますか？' : 'テンプレートを削除しますか？')
+    if (!ok) return
+
+    setArticleTemplates((current) => current.filter((template) => template.id !== templateId))
+    setArticleDrafts((current) => current.map((draft) => draft.template_id === templateId ? { ...draft, template_id: null } : draft))
+    setSelectedArticleTemplateId((current) => current === templateId ? null : current)
+    markLocalChange()
+  }
+
+  const createArticleDraft = (sourceCard?: CardWithTags | null) => {
+    const template = selectedArticleTemplate ?? articleTemplates[0]
+    if (!template) {
+      setSyncError('先にテンプレートを作成するか、標準テンプレートを追加してください。')
+      setShowArticleStudio(true)
+      setArticleStudioTab('templates')
+      return
+    }
+
+    const now = new Date().toISOString()
+    const draft: ArticleDraft = {
+      id: createId('article'),
+      template_id: template.id,
+      title: sourceCard ? `${sourceCard.title || '無題のカード'} を記事化` : `${template.name}の記事候補`,
+      site: sourceCard?.site ?? template.site,
+      stage: 'candidate',
+      summary: sourceCard ? getPreview(sourceCard.body) : '',
+      sections: buildSectionsFromTemplate(template, sourceCard),
+      source_card_id: sourceCard?.id ?? null,
+      attached_card_ids: sourceCard ? [sourceCard.id] : [],
+      created_at: now,
+      updated_at: now,
+      device_id: syncState.deviceId,
+    }
+
+    setArticleDrafts((current) => [draft, ...current])
+    setSelectedArticleDraftId(draft.id)
+    setShowArticleStudio(true)
+    setArticleStudioTab('drafts')
+
+    if (sourceCard) {
+      setCards((current) => current.map((card) => card.id === sourceCard.id ? { ...card, status: 'article-ready', updated_at: now } : card))
+    }
+
+    markLocalChange()
+    setSyncMessage(sourceCard ? 'カードから記事候補を作成し、素材カードとして紐付けました。ログイン中はSupabaseへ自動保存されます。' : '空の記事候補を作成しました。ログイン中はSupabaseへ自動保存されます。')
+  }
+
+  const updateArticleDraft = (draftId: string, patch: Partial<ArticleDraft>) => {
+    const now = new Date().toISOString()
+    setArticleDrafts((current) => current.map((draft) => draft.id === draftId ? { ...draft, ...patch, updated_at: now } : draft))
+    markLocalChange()
+  }
+
+  const updateArticleDraftSection = (draftId: string, fieldId: string, content: string) => {
+    setArticleDrafts((current) => current.map((draft) => {
+      if (draft.id !== draftId) return draft
+      return {
+        ...draft,
+        sections: draft.sections.map((section) => section.field_id === fieldId ? { ...section, content } : section),
+        updated_at: new Date().toISOString(),
+      }
+    }))
+    markLocalChange()
+  }
+
+  const attachCardToDraft = (draftId: string, cardId: string) => {
+    setArticleDrafts((current) => current.map((draft) => {
+      if (draft.id !== draftId || draft.attached_card_ids.includes(cardId)) return draft
+      return {
+        ...draft,
+        attached_card_ids: [...draft.attached_card_ids, cardId],
+        updated_at: new Date().toISOString(),
+      }
+    }))
+    markLocalChange()
+  }
+
+  const detachCardFromDraft = (draftId: string, cardId: string) => {
+    setArticleDrafts((current) => current.map((draft) => draft.id === draftId ? {
+      ...draft,
+      attached_card_ids: draft.attached_card_ids.filter((id) => id !== cardId),
+      updated_at: new Date().toISOString(),
+    } : draft))
+    markLocalChange()
+  }
+
+  const deleteArticleDraft = (draftId: string) => {
+    const ok = window.confirm('記事候補を削除しますか？素材カード自体は削除されません。')
+    if (!ok) return
+
+    setArticleDrafts((current) => current.filter((draft) => draft.id !== draftId))
+    setSelectedArticleDraftId((current) => current === draftId ? null : current)
+    markLocalChange()
+  }
+
+  const exportArticleDraftMarkdown = (draft: ArticleDraft) => {
+    const markdown = renderArticleDraftMarkdown(draft, cardsById)
+    const filename = `${draft.title || 'article-draft'}.md`.replace(/[\\/:*?"<>|]/g, '-')
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const promoteArticleDraftToCard = (draft: ArticleDraft) => {
+    const now = new Date().toISOString()
+    const newCard: CardWithTags = {
+      id: createId('card'),
+      title: draft.title || '無題の記事下書き',
+      body: renderArticleDraftMarkdown(draft, cardsById),
+      site: draft.site,
+      status: 'draft',
+      created_at: now,
+      updated_at: now,
+      device_id: syncState.deviceId,
+      tags: parseTags('article-draft'),
+    }
+
+    setCards((current) => [newCard, ...current])
+    updateArticleDraft(draft.id, { stage: 'draft' })
+    setSelectedCardId(newCard.id)
+    setForm(toFormState(newCard))
+    setEditorMode('edit')
+    setShowDetail(true)
+    setShowArticleStudio(false)
+    markLocalChange()
+    setSyncMessage('記事候補から下書きカードを作成しました。')
   }
 
   const quickMemoModal = isQuickMemoOpen ? (
@@ -1603,6 +2368,224 @@ function App() {
     </div>
   ) : null
 
+
+  if (showArticleStudio) {
+    const activeDraft = selectedArticleDraft
+    const attachedCards = activeDraft
+      ? activeDraft.attached_card_ids.map((cardId) => cardsById.get(cardId)).filter((card): card is CardWithTags => Boolean(card))
+      : []
+    const unattachedCards = cards
+      .filter((card) => card.status !== 'trash' && (!activeDraft || !activeDraft.attached_card_ids.includes(card.id)))
+      .slice(0, 12)
+
+    return (
+      <main className="app-shell article-studio-screen">
+        {quickMemoModal}
+        <header className="app-header article-studio-header">
+          <div>
+            <p className="eyebrow">Article Studio</p>
+            <h1>テンプレート・記事候補</h1>
+            <p className="lead">
+              メモをそのまま記事候補にするだけでなく、テンプレートを作り、カードを素材としてぶら下げながら本文を埋めます。
+            </p>
+          </div>
+          <div className="header-actions">
+            <button className="ghost-button" type="button" onClick={closeArticleStudio}>← カード一覧へ戻る</button>
+            <button className="primary-button" type="button" onClick={() => createArticleDraft(null)}>+ 空の記事候補</button>
+            {authBar}
+          </div>
+        </header>
+
+        <section className="article-studio-tabs" aria-label="記事スタジオ切替">
+          <button className={articleStudioTab === 'drafts' ? 'active' : ''} type="button" onClick={() => setArticleStudioTab('drafts')}>
+            記事候補 <strong>{articleDrafts.length}</strong>
+          </button>
+          <button className={articleStudioTab === 'templates' ? 'active' : ''} type="button" onClick={() => setArticleStudioTab('templates')}>
+            テンプレート <strong>{articleTemplates.length}</strong>
+          </button>
+        </section>
+
+        {articleStudioTab === 'templates' ? (
+          <section className="template-studio-layout" aria-label="テンプレート管理">
+            <article className="template-editor-panel">
+              <div className="panel-title-row">
+                <div>
+                  <p className="eyebrow">Template Builder</p>
+                  <h2>テンプレート作成</h2>
+                </div>
+                <button className="ghost-button" type="button" onClick={addDefaultTemplates}>標準テンプレート追加</button>
+              </div>
+              <label className="form-field">
+                <span>テンプレート名</span>
+                <input value={templateName} onChange={(event) => setTemplateName(event.target.value)} placeholder="例: AI設計ガイド記事" />
+              </label>
+              <div className="form-row">
+                <label className="form-field">
+                  <span>対象サイト</span>
+                  <select value={templateSite} onChange={(event) => setTemplateSite(event.target.value as SiteType)}>
+                    {SITE_TYPES.map((site) => <option key={site} value={site}>{SITE_TYPE_LABELS[site]}</option>)}
+                  </select>
+                </label>
+              </div>
+              <label className="form-field">
+                <span>説明</span>
+                <textarea value={templateDescription} onChange={(event) => setTemplateDescription(event.target.value)} rows={3} placeholder="このテンプレートを何に使うか" />
+              </label>
+              <label className="form-field">
+                <span>項目（1行1項目）</span>
+                <textarea value={templateFieldsText} onChange={(event) => setTemplateFieldsText(event.target.value)} rows={9} placeholder={'結論\n背景\n問題\n具体例\nまとめ'} />
+              </label>
+              <button className="primary-button" type="button" onClick={saveArticleTemplate}>テンプレートを保存</button>
+            </article>
+
+            <section className="template-list-panel">
+              <div className="panel-title-row">
+                <div>
+                  <p className="eyebrow">Templates</p>
+                  <h2>保存済みテンプレート</h2>
+                </div>
+                <span>{articleTemplates.length}件</span>
+              </div>
+              {articleTemplates.length === 0 ? (
+                <div className="empty-state-card">
+                  <strong>テンプレートがありません</strong>
+                  <p>標準テンプレートを追加するか、自分の記事型を作ってください。</p>
+                </div>
+              ) : (
+                <div className="template-list">
+                  {articleTemplates.map((template) => (
+                    <article className={selectedArticleTemplateId === template.id ? 'template-card active' : 'template-card'} key={template.id}>
+                      <button type="button" onClick={() => setSelectedArticleTemplateId(template.id)}>
+                        <span className="site-pill">{SITE_TYPE_LABELS[template.site]}</span>
+                        <strong>{template.name}</strong>
+                        <small>{template.fields.length}項目 / 更新 {formatDate(template.updated_at)}</small>
+                        <p>{template.description || '説明なし'}</p>
+                      </button>
+                      <div className="template-field-chips">
+                        {template.fields.map((field) => <span key={field.id}>{field.label}</span>)}
+                      </div>
+                      <div className="template-card-actions">
+                        <button type="button" onClick={() => createArticleDraft(null)}>この型で記事候補</button>
+                        <button className="danger" type="button" onClick={() => deleteArticleTemplate(template.id)}>削除</button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+          </section>
+        ) : (
+          <section className="article-draft-layout" aria-label="記事候補管理">
+            <aside className="draft-list-panel">
+              <div className="panel-title-row">
+                <div>
+                  <p className="eyebrow">Candidates</p>
+                  <h2>記事候補</h2>
+                </div>
+                <button className="ghost-button" type="button" onClick={() => createArticleDraft(null)}>新規</button>
+              </div>
+              {articleDrafts.length === 0 ? (
+                <div className="empty-state-card">
+                  <strong>記事候補がありません</strong>
+                  <p>カード詳細の「記事候補化」か、ここから空の記事候補を作成してください。</p>
+                </div>
+              ) : (
+                <div className="draft-list">
+                  {articleDrafts.map((draft) => (
+                    <button className={activeDraft?.id === draft.id ? 'draft-list-item active' : 'draft-list-item'} key={draft.id} type="button" onClick={() => setSelectedArticleDraftId(draft.id)}>
+                      <strong>{draft.title || '無題の記事候補'}</strong>
+                      <span>{SITE_TYPE_LABELS[draft.site]} / {ARTICLE_STAGE_LABELS[draft.stage]}</span>
+                      <small>素材 {draft.attached_card_ids.length}件 / 更新 {formatDate(draft.updated_at)}</small>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </aside>
+
+            {activeDraft ? (
+              <section className="draft-editor-panel">
+                <div className="panel-title-row">
+                  <div>
+                    <p className="eyebrow">Article Candidate</p>
+                    <h2>記事候補を埋める</h2>
+                  </div>
+                  <div className="article-draft-actions">
+                    <button type="button" onClick={() => exportArticleDraftMarkdown(activeDraft)}>MD出力</button>
+                    <button type="button" onClick={() => promoteArticleDraftToCard(activeDraft)}>下書きカード化</button>
+                    <button className="danger" type="button" onClick={() => deleteArticleDraft(activeDraft.id)}>削除</button>
+                  </div>
+                </div>
+
+                <div className="form-row">
+                  <label className="form-field">
+                    <span>記事タイトル</span>
+                    <input value={activeDraft.title} onChange={(event) => updateArticleDraft(activeDraft.id, { title: event.target.value })} />
+                  </label>
+                  <label className="form-field">
+                    <span>段階</span>
+                    <select value={activeDraft.stage} onChange={(event) => updateArticleDraft(activeDraft.id, { stage: event.target.value as ArticleStage })}>
+                      {Object.entries(ARTICLE_STAGE_LABELS).map(([stage, label]) => <option key={stage} value={stage}>{label}</option>)}
+                    </select>
+                  </label>
+                </div>
+
+                <label className="form-field">
+                  <span>要約・狙い</span>
+                  <textarea value={activeDraft.summary} onChange={(event) => updateArticleDraft(activeDraft.id, { summary: event.target.value })} rows={3} placeholder="この記事で何を伝えるか" />
+                </label>
+
+                <div className="draft-section-list">
+                  {activeDraft.sections.map((section) => (
+                    <label className="draft-section-field" key={section.field_id}>
+                      <span>{section.label}</span>
+                      <textarea value={section.content} onChange={(event) => updateArticleDraftSection(activeDraft.id, section.field_id, event.target.value)} rows={7} placeholder="素材カードを見ながら埋める" />
+                    </label>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            <aside className="draft-material-panel">
+              <div className="panel-title-row">
+                <div>
+                  <p className="eyebrow">Materials</p>
+                  <h2>素材カード</h2>
+                </div>
+                <span>{attachedCards.length}件</span>
+              </div>
+
+              {activeDraft ? (
+                <>
+                  <div className="attached-card-list">
+                    {attachedCards.length === 0 ? <p className="related-empty">まだ素材カードはありません。</p> : attachedCards.map((card) => (
+                      <article className="attached-card" key={card.id}>
+                        <strong>{card.title || '無題のカード'}</strong>
+                        <p>{getPreview(card.body)}</p>
+                        <button type="button" onClick={() => detachCardFromDraft(activeDraft.id, card.id)}>外す</button>
+                      </article>
+                    ))}
+                  </div>
+
+                  <div className="material-candidate-list">
+                    <h3>追加できるカード</h3>
+                    {unattachedCards.map((card) => (
+                      <button key={card.id} type="button" onClick={() => attachCardToDraft(activeDraft.id, card.id)}>
+                        <strong>{card.title || '無題のカード'}</strong>
+                        <span>{SITE_TYPE_LABELS[card.site]} / {CARD_STATUS_LABELS[card.status]}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="related-empty">記事候補を選ぶと素材カードを管理できます。</p>
+              )}
+            </aside>
+          </section>
+        )}
+      </main>
+    )
+  }
+
   if (showTrash) {
     return (
       <main className="app-shell trash-screen">
@@ -1618,6 +2601,9 @@ function App() {
           <div className="trash-window-actions">
             <button className="ghost-button" type="button" onClick={closeTrashWindow}>
               ← カード一覧へ戻る
+            </button>
+            <button className="ghost-button" type="button" onClick={() => createArticleDraft(selectedCard)}>
+              記事候補化
             </button>
             <button className="primary-button" type="button" onClick={openQuickMemo}>
               + クイックメモ
@@ -2089,6 +3075,9 @@ function App() {
           </p>
         </div>
         <div className="header-actions">
+          <button className="ghost-button" type="button" onClick={openArticleStudio}>
+            テンプレート・記事候補
+          </button>
           <button className="ghost-button" type="button" onClick={openArticleBoard}>
             記事化ボード
           </button>
@@ -2720,6 +3709,9 @@ function App() {
                               {CARD_STATUS_LABELS[getNextStatus(card.status)!]}へ
                             </button>
                           ) : null}
+                          <button type="button" onClick={() => createArticleDraft(card)}>
+                            記事候補化
+                          </button>
                           <button type="button" onClick={() => selectCard(card)}>
                             詳細を見る
                           </button>

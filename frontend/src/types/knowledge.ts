@@ -18,6 +18,48 @@ export type SiteType =
 export type ISODateTimeString = string
 export type UUID = string
 
+
+export type ArticleStage = 'candidate' | 'draft' | 'published' | 'archived'
+
+export type ArticleTemplateField = {
+  id: UUID
+  label: string
+  helpText: string
+  placeholder: string
+}
+
+export type ArticleTemplate = {
+  id: UUID
+  name: string
+  site: SiteType
+  description: string
+  fields: ArticleTemplateField[]
+  created_at: ISODateTimeString
+  updated_at: ISODateTimeString
+  device_id: string | null
+}
+
+export type ArticleDraftSection = {
+  field_id: UUID
+  label: string
+  content: string
+}
+
+export type ArticleDraft = {
+  id: UUID
+  template_id: UUID | null
+  title: string
+  site: SiteType
+  stage: ArticleStage
+  summary: string
+  sections: ArticleDraftSection[]
+  source_card_id: UUID | null
+  attached_card_ids: UUID[]
+  created_at: ISODateTimeString
+  updated_at: ISODateTimeString
+  device_id: string | null
+}
+
 export type Card = {
   id: UUID
   title: string
