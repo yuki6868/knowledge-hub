@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from 'react'
 import {
   ARTICLE_BOARD_STATUSES,
   CARD_STATUS_LABELS,
@@ -12,6 +12,15 @@ import { getRelatedCards } from './utils/relatedCards'
 import { downloadCardAsJson, downloadCardsAsJsonBundle } from './utils/jsonExport'
 import { downloadCardAsMarkdown, downloadCardsAsMarkdownBundle } from './utils/markdownExport'
 import { isSupabaseConfigured } from './lib/supabase'
+import type { Session } from '@supabase/supabase-js'
+import {
+  getCurrentSession,
+  signInWithEmail,
+  signInWithGoogle,
+  signOutFromSupabase,
+  signUpWithEmail,
+  subscribeAuthState,
+} from './services/supabaseAuth'
 import {
   fetchCardHistoriesFromSupabase,
   fetchCardsFromSupabase,
@@ -31,6 +40,7 @@ type SiteFilter = SiteType | 'all'
 type TagFilter = string | 'all'
 type TagSortMode = 'count' | 'name'
 type EditorMode = 'new' | 'edit'
+type AuthMode = 'login' | 'signup'
 type SyncStatus = 'synced' | 'pending' | 'conflict' | 'syncing'
 type RealtimeStatus = 'disabled' | 'connecting' | 'connected' | 'disconnected' | 'error'
 type BeforeInstallPromptEvent = Event & {
@@ -286,6 +296,13 @@ function App() {
   }))
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
   const [syncError, setSyncError] = useState<string | null>(null)
+  const [session, setSession] = useState<Session | null>(null)
+  const [authLoading, setAuthLoading] = useState(isSupabaseConfigured)
+  const [authMode, setAuthMode] = useState<AuthMode>('login')
+  const [authEmail, setAuthEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [authMessage, setAuthMessage] = useState<string | null>(null)
+  const [authError, setAuthError] = useState<string | null>(null)
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [isStandalone, setIsStandalone] = useState(() =>
     window.matchMedia('(display-mode: standalone)').matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone),
@@ -336,6 +353,38 @@ function App() {
 
     return () => window.clearTimeout(timerId)
   }, [syncError, syncMessage])
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setAuthLoading(false)
+      return
+    }
+
+    let mounted = true
+
+    getCurrentSession()
+      .then((currentSession) => {
+        if (!mounted) return
+        setSession(currentSession)
+      })
+      .catch((error) => {
+        if (!mounted) return
+        const message = error instanceof Error ? error.message : 'ログイン状態の確認に失敗しました。'
+        setAuthError(message)
+      })
+      .finally(() => {
+        if (mounted) setAuthLoading(false)
+      })
+
+    const unsubscribe = subscribeAuthState((_event, nextSession) => {
+      setSession(nextSession)
+    })
+
+    return () => {
+      mounted = false
+      unsubscribe()
+    }
+  }, [])
+
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(display-mode: standalone)')
@@ -800,6 +849,180 @@ function App() {
             : '未使用'
   const pwaStatusLabel = isStandalone ? 'ホーム画面起動中' : installPrompt ? '追加できます' : 'ブラウザ起動中'
   const networkStatusLabel = isOnline ? 'オンライン' : 'オフライン'
+  const handleGoogleLogin = async () => {
+    setAuthError(null)
+    setAuthMessage('Googleログインへ移動します。')
+
+    try {
+      await signInWithGoogle()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Googleログインに失敗しました。'
+      setAuthError(message)
+      setAuthMessage(null)
+    }
+  }
+
+  const handleEmailAuth = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const email = authEmail.trim()
+
+    if (!email || !authPassword) {
+      setAuthError('メールアドレスとパスワードを入力してください。')
+      return
+    }
+
+    setAuthError(null)
+    setAuthMessage(null)
+    setAuthLoading(true)
+
+    try {
+      const nextSession =
+        authMode === 'login'
+          ? await signInWithEmail(email, authPassword)
+          : await signUpWithEmail(email, authPassword)
+
+      setSession(nextSession)
+      setAuthPassword('')
+      setAuthMessage(
+        authMode === 'login'
+          ? 'ログインしました。Supabaseから読み込みできます。'
+          : nextSession
+            ? 'アカウントを作成してログインしました。'
+            : '確認メールを送信しました。メール内のリンクからログインしてください。',
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'メール認証に失敗しました。'
+      setAuthError(message)
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  const handleSignOut = async () => {
+    setAuthError(null)
+    setSyncError(null)
+    setSyncMessage(null)
+
+    try {
+      await signOutFromSupabase()
+      setSession(null)
+      setCards(mockCards)
+      setCardHistories([])
+      setConflicts([])
+      setSelectedCardId(null)
+      setSelectedConflictId(null)
+      setShowDetail(false)
+      setShowTrash(false)
+      setShowArticleBoard(false)
+      setExportCardIds([])
+      setSyncState((current) => ({
+        ...current,
+        status: 'synced',
+        pendingCount: 0,
+        conflictCount: 0,
+        lastSyncedAt: new Date().toISOString(),
+      }))
+      setAuthMessage('ログアウトしました。')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'ログアウトに失敗しました。'
+      setAuthError(message)
+    }
+  }
+
+  const authUserLabel = session?.user.email ?? '未ログイン'
+  const authBar = isSupabaseConfigured ? (
+    <div className="auth-user-box" aria-label="ログイン状態">
+      <div>
+        <span>ログイン中</span>
+        <strong>{authUserLabel}</strong>
+      </div>
+      <button className="ghost-button" type="button" onClick={handleSignOut}>
+        ログアウト
+      </button>
+    </div>
+  ) : null
+
+  if (isSupabaseConfigured && authLoading && !session) {
+    return (
+      <main className="app-shell auth-screen">
+        <section className="auth-card">
+          <p className="eyebrow">Knowledge Hub Auth</p>
+          <h1>ログイン状態を確認中</h1>
+          <p>Supabase Authのセッションを復元しています。</p>
+        </section>
+      </main>
+    )
+  }
+
+  if (isSupabaseConfigured && !session) {
+    return (
+      <main className="app-shell auth-screen">
+        <section className="auth-card" aria-label="ログイン">
+          <div className="auth-card-header">
+            <p className="eyebrow">Knowledge Hub Auth</p>
+            <h1>知識カードにログイン</h1>
+            <p>
+              Supabase Authでログインすると、Mac・iPhone間の同期を同じアカウントで使えます。
+              Googleログイン、またはメールアドレスで開始できます。
+            </p>
+          </div>
+
+          <button className="google-auth-button" type="button" onClick={handleGoogleLogin} disabled={authLoading}>
+            Googleでログイン
+          </button>
+
+          <div className="auth-divider"><span>または</span></div>
+
+          <form className="auth-form" onSubmit={handleEmailAuth}>
+            <label>
+              <span>メールアドレス</span>
+              <input
+                type="email"
+                value={authEmail}
+                onChange={(event) => setAuthEmail(event.target.value)}
+                placeholder="you@example.com"
+                autoComplete="email"
+              />
+            </label>
+            <label>
+              <span>パスワード</span>
+              <input
+                type="password"
+                value={authPassword}
+                onChange={(event) => setAuthPassword(event.target.value)}
+                placeholder="8文字以上推奨"
+                autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
+              />
+            </label>
+
+            <button className="primary-button" type="submit" disabled={authLoading}>
+              {authLoading ? '処理中...' : authMode === 'login' ? 'メールでログイン' : 'メールで登録'}
+            </button>
+          </form>
+
+          <button
+            className="auth-mode-switch"
+            type="button"
+            onClick={() => {
+              setAuthMode((current) => (current === 'login' ? 'signup' : 'login'))
+              setAuthError(null)
+              setAuthMessage(null)
+            }}
+          >
+            {authMode === 'login' ? '新規登録はこちら' : 'ログインに戻る'}
+          </button>
+
+          {authMessage ? <p className="auth-message">{authMessage}</p> : null}
+          {authError ? <p className="auth-error">{authError}</p> : null}
+
+          <div className="auth-note">
+            <strong>Supabase側の設定</strong>
+            <span>Authentication → Providers で Google と Email を有効化してください。</span>
+          </div>
+        </section>
+      </main>
+    )
+  }
 
   const installPwa = async () => {
     if (!installPrompt) {
@@ -1251,6 +1474,7 @@ function App() {
             </p>
           </div>
           <div className="trash-window-actions">
+            {authBar}
             <button className="ghost-button" type="button" onClick={closeTrashWindow}>
               ← カード一覧へ戻る
             </button>
@@ -1380,6 +1604,7 @@ function App() {
             </p>
           </div>
           <div className="detail-header-actions">
+            {authBar}
             <button className="ghost-button" type="button" onClick={() => setShowDetail(false)}>
               ← カード一覧へ戻る
             </button>
@@ -1583,6 +1808,7 @@ function App() {
             </p>
           </div>
           <div className="article-board-window-actions">
+            {authBar}
             <button className="ghost-button" type="button" onClick={closeArticleBoard}>
               ← カード一覧へ戻る
             </button>
@@ -1721,6 +1947,7 @@ function App() {
           </p>
         </div>
         <div className="header-actions">
+          {authBar}
           <button className="ghost-button" type="button" onClick={openArticleBoard}>
             記事化ボード
           </button>
