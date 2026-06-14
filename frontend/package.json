@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "electron:dev": "npm run electron:icons && electron .",
+    "electron:dev": "npm run electron:icons && concurrently -k \"npm run dev -- --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && KNOWLEDGE_HUB_URL=http://127.0.0.1:5173 electron .\"",
     "electron:pack": "npm run electron:icons && electron-builder --mac --dir",
     "electron:dmg": "npm run electron:icons && electron-builder --mac dmg",
     "electron:icons": "node scripts/generate-electron-icons.cjs"
@@ -32,7 +32,9 @@
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12",
     "electron": "^39.2.7",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "concurrently": "^9.2.1",
+    "wait-on": "^8.0.3"
   },
   "engines": {
     "node": ">=20.19.0"

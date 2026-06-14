@@ -1,11 +1,12 @@
 const path = require('node:path')
-const { app, BrowserWindow, Menu, shell } = require('electron')
+const { app, BrowserWindow, Menu, globalShortcut, shell } = require('electron')
 
 const PRODUCTION_URL = 'https://knowledge-hub-tawny-one.vercel.app'
 const APP_NAME = 'Knowledge Hub'
 const APP_PROTOCOL = 'knowledge-hub'
 
 let mainWindow = null
+let quickMemoWindow = null
 let pendingDeepLinkUrl = null
 
 const resolveStartUrl = () => {
@@ -19,6 +20,12 @@ const resolveStartUrl = () => {
 const getAppIconPath = () => {
   const iconName = process.platform === 'darwin' ? 'icon.icns' : 'icon.png'
   return path.join(__dirname, 'assets', iconName)
+}
+
+const buildQuickMemoUrl = () => {
+  const startUrl = new URL(resolveStartUrl())
+  startUrl.searchParams.set('khQuickMemo', '1')
+  return startUrl.toString()
 }
 
 const isAppProtocolUrl = (url) => url.startsWith(`${APP_PROTOCOL}://`)
@@ -69,6 +76,86 @@ const handleDeepLink = (url) => {
   const webCallbackUrl = buildCallbackUrlForWebApp(url)
   mainWindow.loadURL(webCallbackUrl)
   focusMainWindow()
+}
+
+
+const createQuickMemoWindow = () => {
+  if (quickMemoWindow && !quickMemoWindow.isDestroyed()) {
+    if (quickMemoWindow.isMinimized()) quickMemoWindow.restore()
+    quickMemoWindow.show()
+    quickMemoWindow.focus()
+    return
+  }
+
+  quickMemoWindow = new BrowserWindow({
+    width: 560,
+    height: 620,
+    minWidth: 460,
+    minHeight: 520,
+    title: 'Quick Memo - Knowledge Hub',
+    backgroundColor: '#0f172a',
+    show: false,
+    alwaysOnTop: true,
+    skipTaskbar: false,
+    icon: getAppIconPath(),
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+    },
+  })
+
+  quickMemoWindow.once('ready-to-show', () => {
+    quickMemoWindow?.show()
+    quickMemoWindow?.focus()
+  })
+
+  quickMemoWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isAppProtocolUrl(url)) {
+      handleDeepLink(url)
+      return { action: 'deny' }
+    }
+
+    if (isAllowedInAppUrl(url)) {
+      quickMemoWindow?.loadURL(url)
+      return { action: 'deny' }
+    }
+
+    shell.openExternal(url)
+    return { action: 'deny' }
+  })
+
+  quickMemoWindow.webContents.on('will-navigate', (event, url) => {
+    if (isAppProtocolUrl(url)) {
+      event.preventDefault()
+      handleDeepLink(url)
+      return
+    }
+
+    if (!isAllowedInAppUrl(url)) {
+      event.preventDefault()
+      shell.openExternal(url)
+    }
+  })
+
+  quickMemoWindow.on('closed', () => {
+    quickMemoWindow = null
+  })
+
+  quickMemoWindow.loadURL(buildQuickMemoUrl())
+}
+
+const registerGlobalShortcuts = () => {
+  globalShortcut.unregisterAll()
+
+  const registered = globalShortcut.register('CommandOrControl+Shift+Space', () => {
+    createQuickMemoWindow()
+  })
+
+  if (!registered) {
+    console.warn('Knowledge Hub: global shortcut CommandOrControl+Shift+Space could not be registered.')
+  }
 }
 
 const createMainWindow = () => {
@@ -139,6 +226,12 @@ const createApplicationMenu = () => {
       submenu: [
         { role: 'about' },
         { type: 'separator' },
+        {
+          label: 'クイックメモを開く',
+          accelerator: 'CommandOrControl+Shift+Space',
+          click: () => createQuickMemoWindow(),
+        },
+        { type: 'separator' },
         { role: 'hide' },
         { role: 'hideOthers' },
         { role: 'unhide' },
@@ -201,6 +294,7 @@ if (!gotSingleInstanceLock) {
     app.setName(APP_NAME)
     app.setAsDefaultProtocolClient(APP_PROTOCOL)
     createApplicationMenu()
+    registerGlobalShortcuts()
     createMainWindow()
 
     app.on('activate', () => {
@@ -210,6 +304,10 @@ if (!gotSingleInstanceLock) {
         focusMainWindow()
       }
     })
+  })
+
+  app.on('will-quit', () => {
+    globalShortcut.unregisterAll()
   })
 
   app.on('window-all-closed', () => {

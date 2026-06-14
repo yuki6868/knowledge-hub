@@ -520,6 +520,7 @@ function toFormState(card: CardWithTags): CardFormState {
 }
 
 function App() {
+  const isElectronQuickMemo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('khQuickMemo') === '1'
   const storedKnowledgeCards = useMemo(() => loadStoredKnowledgeCards(), [])
   const [cards, setCards] = useState<CardWithTags[]>(() => storedKnowledgeCards.cards ?? [])
   const [cardHistories, setCardHistories] = useState<CardHistory[]>(() => storedKnowledgeCards.card_histories ?? [])
@@ -1621,7 +1622,21 @@ function App() {
 
   const closeQuickMemo = () => {
     setIsQuickMemoOpen(false)
+
+    if (isElectronQuickMemo) {
+      window.setTimeout(() => window.close(), 80)
+    }
   }
+
+  useEffect(() => {
+    if (!isElectronQuickMemo) return
+
+    setQuickMemoTitle('')
+    setQuickMemoBody('')
+    setQuickMemoSite('other')
+    setQuickMemoTagsText('')
+    setIsQuickMemoOpen(true)
+  }, [isElectronQuickMemo])
 
   const saveQuickMemo = async () => {
     const trimmedTitle = quickMemoTitle.trim()
@@ -1659,6 +1674,9 @@ function App() {
 
     if (!isSupabaseConfigured || !activeUserId) {
       setSyncMessage('クイックメモをローカルに保存しました。ログイン後にSupabaseへ同期できます。')
+      if (isElectronQuickMemo) {
+        window.setTimeout(() => window.close(), 180)
+      }
       return
     }
 
@@ -1672,6 +1690,9 @@ function App() {
         lastSyncedAt: new Date().toISOString(),
       }))
       setSyncMessage('クイックメモを保存し、Supabaseへ同期しました。iPhoneからでもPCに反映されます。')
+      if (isElectronQuickMemo) {
+        window.setTimeout(() => window.close(), 180)
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'クイックメモの自動同期に失敗しました。'
       setSyncError(message)
@@ -2297,7 +2318,7 @@ function App() {
           <div>
             <p className="eyebrow">Quick Memo</p>
             <h2 id="quick-memo-title">クイックメモ</h2>
-            <p>あとで整理する前提で、まずは inbox に放り込みます。</p>
+            <p>{isElectronQuickMemo ? 'Cmd + Shift + Space から即メモできます。保存するとこの小窓は閉じます。' : 'あとで整理する前提で、まずは inbox に放り込みます。'}</p>
           </div>
           <button className="quick-memo-close" type="button" onClick={closeQuickMemo} aria-label="閉じる">
             ×
@@ -2368,6 +2389,14 @@ function App() {
     </div>
   ) : null
 
+
+  if (isElectronQuickMemo) {
+    return (
+      <main className="app-shell electron-quick-memo-shell">
+        {quickMemoModal}
+      </main>
+    )
+  }
 
   if (showArticleStudio) {
     const activeDraft = selectedArticleDraft
