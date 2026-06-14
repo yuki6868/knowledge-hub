@@ -1795,6 +1795,7 @@
 }
 
 .quick-memo-field input,
+.quick-memo-field select,
 .quick-memo-field textarea {
   width: 100%;
   box-sizing: border-box;
@@ -1814,9 +1815,16 @@
 }
 
 .quick-memo-field input:focus,
+.quick-memo-field select:focus,
 .quick-memo-field textarea:focus {
   border-color: #8b5cf6;
   box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.14);
+}
+
+.quick-memo-mobile-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(220px, 1.2fr);
+  gap: 12px;
 }
 
 .quick-memo-info {
@@ -1856,15 +1864,46 @@
 @media (max-width: 700px) {
   .quick-memo-overlay {
     align-items: end;
-    padding: 12px;
+    padding: 0;
   }
 
   .quick-memo-dialog {
-    border-radius: 24px;
+    width: 100%;
+    max-height: min(92vh, 760px);
+    border-radius: 26px 26px 0 0;
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+  }
+
+  .quick-memo-header {
+    margin-bottom: 14px;
+  }
+
+  .quick-memo-header h2 {
+    font-size: 1.55rem;
+  }
+
+  .quick-memo-field input,
+  .quick-memo-field select,
+  .quick-memo-field textarea {
+    font-size: 16px;
+  }
+
+  .quick-memo-field textarea {
+    min-height: 40vh;
+  }
+
+  .quick-memo-mobile-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
   }
 
   .quick-memo-actions {
+    position: sticky;
+    bottom: 0;
     flex-direction: column-reverse;
+    margin: 0 -16px calc(-18px - env(safe-area-inset-bottom));
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), #fff 34%);
   }
 
   .quick-memo-actions button {
@@ -2325,6 +2364,12 @@
   color: #dbeafe;
   font-size: 0.86rem;
   line-height: 1.6;
+}
+
+@media (max-width: 760px) {
+  .pwa-help {
+    flex-direction: column;
+  }
 }
 
 .auth-screen {

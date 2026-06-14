@@ -9,7 +9,7 @@ import {
 import { mockCards } from './data/mockCards'
 import type { CardHistory, CardStatus, CardWithTags, Conflict, RelatedCardReason, SiteType, Tag } from './types/knowledge'
 import { getRelatedCards } from './utils/relatedCards'
-import { downloadCardAsJson, downloadCardsAsJsonBundle } from './utils/jsonExport'
+import { downloadCardAsJson, downloadCardsAsJsonBundle, downloadJsonFile } from './utils/jsonExport'
 import { downloadCardAsMarkdown, downloadCardsAsMarkdownBundle } from './utils/markdownExport'
 import { isSupabaseConfigured, supabaseConfigDebug } from './lib/supabase'
 import type { Session } from '@supabase/supabase-js'
@@ -288,6 +288,8 @@ function App() {
   const [isQuickMemoOpen, setIsQuickMemoOpen] = useState(false)
   const [quickMemoTitle, setQuickMemoTitle] = useState('')
   const [quickMemoBody, setQuickMemoBody] = useState('')
+  const [quickMemoSite, setQuickMemoSite] = useState<SiteType>('other')
+  const [quickMemoTagsText, setQuickMemoTagsText] = useState('')
   const [draggingArticleCardId, setDraggingArticleCardId] = useState<string | null>(null)
   const [dragOverArticleStatus, setDragOverArticleStatus] = useState<CardStatus | null>(null)
   const [syncState, setSyncState] = useState<SyncState>(() => ({
@@ -862,6 +864,7 @@ function App() {
             ? '切断'
             : '未使用'
   const pwaStatusLabel = isStandalone ? 'ホーム画面起動中' : installPrompt ? '追加できます' : 'ブラウザ起動中'
+  const currentOrigin = typeof window === 'undefined' ? '' : window.location.origin
   const networkStatusLabel = isOnline ? 'オンライン' : 'オフライン'
   const handleGoogleLogin = async () => {
     setAuthError(null)
@@ -1085,6 +1088,8 @@ function App() {
   const openQuickMemo = () => {
     setQuickMemoTitle('')
     setQuickMemoBody('')
+    setQuickMemoSite('other')
+    setQuickMemoTagsText('')
     setIsQuickMemoOpen(true)
   }
 
@@ -1092,7 +1097,7 @@ function App() {
     setIsQuickMemoOpen(false)
   }
 
-  const saveQuickMemo = () => {
+  const saveQuickMemo = async () => {
     const trimmedTitle = quickMemoTitle.trim()
     const trimmedBody = quickMemoBody.trim()
 
@@ -1103,31 +1108,54 @@ function App() {
       id: createId('card'),
       title: trimmedTitle || getPreview(trimmedBody) || '無題のメモ',
       body: quickMemoBody,
-      site: 'other',
+      site: quickMemoSite,
       status: 'inbox',
       created_at: now,
       updated_at: now,
       device_id: syncState.deviceId,
-      tags: [],
+      tags: parseTags(quickMemoTagsText),
     }
+    const nextCards = [newCard, ...cards]
 
-    setCards((current) => [newCard, ...current])
+    setCards(nextCards)
     setSelectedCardId(newCard.id)
     setEditorMode('new')
     setForm(EMPTY_FORM)
     setQuickMemoTitle('')
     setQuickMemoBody('')
+    setQuickMemoSite('other')
+    setQuickMemoTagsText('')
     setIsQuickMemoOpen(false)
     setShowTrash(false)
     setShowArticleBoard(false)
     setShowDetail(false)
     markLocalChange()
+
+    if (!isSupabaseConfigured || !activeUserId) {
+      setSyncMessage('クイックメモをローカルに保存しました。ログイン後にSupabaseへ同期できます。')
+      return
+    }
+
+    try {
+      await pushCardsToSupabase(nextCards, activeUserId)
+      setSyncState((current) => ({
+        ...current,
+        status: unresolvedConflicts.length > 0 ? 'conflict' : 'synced',
+        pendingCount: 0,
+        conflictCount: unresolvedConflicts.length,
+        lastSyncedAt: new Date().toISOString(),
+      }))
+      setSyncMessage('クイックメモを保存し、Supabaseへ同期しました。iPhoneからでもPCに反映されます。')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'クイックメモの自動同期に失敗しました。'
+      setSyncError(message)
+    }
   }
 
   const handleQuickMemoKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
       event.preventDefault()
-      saveQuickMemo()
+      void saveQuickMemo()
     }
   }
 
@@ -1220,6 +1248,35 @@ function App() {
 
   const exportAllCardsAsJson = () => {
     downloadCardsAsJsonBundle(exportableCards, 'all-cards')
+  }
+
+  const downloadFullBackup = () => {
+    const exportedAt = new Date().toISOString()
+    const payload = {
+      app: 'knowledge-hub',
+      format: 'full-backup',
+      version: 1,
+      exported_at: exportedAt,
+      counts: {
+        cards: cards.length,
+        histories: cardHistories.length,
+        conflicts: conflicts.length,
+      },
+      sync: {
+        last_synced_at: syncState.lastSyncedAt,
+        pending_count: syncState.pendingCount,
+        conflict_count: unresolvedConflicts.length,
+        device_id: syncState.deviceId,
+      },
+      data: {
+        cards,
+        card_histories: cardHistories,
+        card_conflicts: conflicts,
+      },
+    }
+
+    downloadJsonFile(`knowledge-hub-backup_${exportedAt.slice(0, 16).replace(/[:T]/g, '-')}.json`, `${JSON.stringify(payload, null, 2)}\n`)
+    setSyncMessage('カード・履歴・競合を含むバックアップJSONを書き出しました。')
   }
 
   const saveCard = () => {
@@ -1479,9 +1536,30 @@ function App() {
           />
         </label>
 
+        <div className="quick-memo-mobile-grid">
+          <label className="quick-memo-field">
+            <span>サイト</span>
+            <select value={quickMemoSite} onChange={(event) => setQuickMemoSite(event.target.value as SiteType)}>
+              {SITE_TYPES.map((site) => (
+                <option key={site} value={site}>
+                  {SITE_TYPE_LABELS[site]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="quick-memo-field">
+            <span>タグ（任意・カンマ区切り）</span>
+            <input
+              value={quickMemoTagsText}
+              onChange={(event) => setQuickMemoTagsText(event.target.value)}
+              placeholder="例: agile, note"
+            />
+          </label>
+        </div>
+
         <div className="quick-memo-info">
           <span>保存先</span>
-          <strong>status: inbox / site: other / tags: なし</strong>
+          <strong>status: inbox / site: {SITE_TYPE_LABELS[quickMemoSite]} / tags: {parseTags(quickMemoTagsText).length}件</strong>
         </div>
 
         <div className="quick-memo-actions">
@@ -1491,7 +1569,7 @@ function App() {
           <button
             className="primary-button"
             type="button"
-            onClick={saveQuickMemo}
+            onClick={() => void saveQuickMemo()}
             disabled={!quickMemoTitle.trim() && !quickMemoBody.trim()}
           >
             inboxへ保存
@@ -2196,14 +2274,17 @@ function App() {
           <button type="button" onClick={resolveConflicts} disabled={syncState.conflictCount === 0}>
             競合解決済みにする
           </button>
+          <button type="button" onClick={downloadFullBackup}>
+            バックアップJSON
+          </button>
           <button type="button" onClick={installPwa} disabled={isStandalone}>
             {isStandalone ? 'ホーム画面追加済み' : installPrompt ? 'ホーム画面に追加' : 'iPhone追加手順を表示'}
           </button>
         </div>
 
         <div className="pwa-help">
-          <strong>iPhone対応</strong>
-          <span>Safariで開き、共有ボタン → ホーム画面に追加。追加後もSupabase同期・Realtime同期をそのまま使えます。</span>
+          <strong>PWA確認</strong>
+          <span>URL: {currentOrigin || '不明'} / 状態: {pwaStatusLabel} / 通信: {networkStatusLabel}。iPhoneはSafariで開き、共有ボタン → ホーム画面に追加。追加後もSupabase同期・Realtime同期を使えます。</span>
         </div>
       </section>
 

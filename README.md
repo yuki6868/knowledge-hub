@@ -18,27 +18,16 @@
 公開済み
 ```
 
+対象は Note、AI時代の設計ガイド、世界遺産サイト、会計士学習メモ、個人開発メモなど。AIは使わず、タグ一致・site一致・タイトル一致・本文単語一致で関連カードを判定します。
+
 ## Tech Stack
 
-- React
-- Vite
-- TypeScript
-- Supabase
-- PostgreSQL
+- React / Vite / TypeScript
+- Supabase / PostgreSQL
 - Supabase Auth
 - Supabase Realtime
 - PWA
-- Future: Electron / Tauri
-
-## Main Status
-
-- inbox
-- card
-- article-ready
-- draft
-- published
-- archived
-- deleted
+- Future: Electron
 
 ## Development
 
@@ -48,36 +37,52 @@ npm install
 npm run dev
 ```
 
-`frontend/.env.local` を作成して Supabase の URL と anon key を設定します。
+`frontend/.env.local` を作成して Supabase の Project URL と Publishable key を設定します。
 
 ```env
 VITE_SUPABASE_URL=https://YOUR_PROJECT_ID.supabase.co
-VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
+VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_PUBLISHABLE_KEY
 ```
 
-`.env.local` は Git に入れません。`.env.example` と `supabase/migrations/` は Git に入れます。
+`.env.local` は Git に入れません。`.env.example`、`supabase/migrations/`、`vercel.json` は Git に入れます。
 
-## Supabase Auth
+## Supabase Setup
 
 Supabase Dashboard で次を設定します。
 
-- Authentication > Providers
-  - Email を有効化
-  - Google を使う場合は Google provider を有効化
-- Authentication > URL Configuration
-  - 開発 Site URL: `http://localhost:5173`
-  - 本番 Site URL: `https://<your-project>.vercel.app`
-  - Redirect URLs に開発URLと本番URLを追加
-
-## Database / Migration
-
-Supabase SQL Editor で `supabase/migrations/` を番号順に適用します。
+1. SQL Editor で migration を番号順に実行
 
 ```text
-001_initial_schema.sql
-002_enable_realtime.sql
-003_user_data_isolation.sql
+supabase/migrations/001_initial_schema.sql
+supabase/migrations/002_enable_realtime.sql
+supabase/migrations/003_user_data_isolation.sql
 ```
+
+2. Authentication > Providers
+   - Email を有効化
+   - Google を使う場合は Google provider を有効化
+
+3. Authentication > URL Configuration
+   - 開発 Site URL: `http://localhost:5173`
+   - 本番 Site URL: `https://<your-project>.vercel.app`
+   - Redirect URLs に次を追加
+
+```text
+http://localhost:5173
+http://localhost:5173/**
+https://<your-project>.vercel.app
+https://<your-project>.vercel.app/**
+```
+
+4. Database > Publications で Realtime 対象を確認
+   - `cards`
+   - `tags`
+   - `card_tags`
+   - `card_histories`
+   - `card_conflicts`
+
+5. RLS確認
+   - `cards.user_id = auth.uid()` 系の policy が入っていることを確認します。
 
 ## Build
 
@@ -100,35 +105,61 @@ npm run build
 
 このリポジトリはルートの `vercel.json` で Vercel 公開できるようにしています。
 
+Vercel 側は次の設定にします。
+
+```text
+Framework Preset: Vite
+Root Directory: frontend
+Install Command: npm ci
+Build Command: npm run build
+Output Directory: dist
+```
+
 Vercel の Environment Variables に次を設定します。
 
 ```env
 VITE_SUPABASE_URL=https://YOUR_PROJECT_ID.supabase.co
-VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
+VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_PUBLISHABLE_KEY
 ```
 
-詳細手順は `docs/vercel-deploy.md` を参照してください。
+`Secret key`、`service_role key`、DBパスワードは入れません。
+
+## Backup
+
+アプリ内の同期パネルから `バックアップJSON` を押すと、次をまとめて書き出します。
+
+- cards
+- card_histories
+- card_conflicts
+- sync metadata
+
+通常の JSON Export はカード本文共有用、バックアップJSONは復旧・退避用です。
 
 ## PWA / iPhone
 
 Knowledge Hub は PWA としてホーム画面追加に対応しています。
 
-### 開発時の確認
-
-```bash
-cd frontend
-npm install
-npm run build
-npm run preview
-```
-
-ブラウザで preview URL を開き、アプリ内の同期状態パネルから PWA 状態を確認します。
-
-### iPhoneで使う
-
-1. SafariでVercel公開URLを開く
-2. 共有ボタンを押す
-3. 「ホーム画面に追加」を選ぶ
-4. ホーム画面の Knowledge Hub から起動する
+1. iPhone の Safari で Vercel 公開URLを開く
+2. Googleログインする
+3. 共有ボタンを押す
+4. 「ホーム画面に追加」を選ぶ
+5. ホーム画面の Knowledge Hub から起動する
+6. クイックメモで保存し、PC側に同期されるか確認する
 
 `http://localhost:5173` は開発確認用です。iPhoneで実用する場合は Vercel の公開URLを使います。
+
+## Quick Memo on iPhone
+
+クイックメモはスマホ向けに下から出る入力画面として使います。
+
+- タイトル任意
+- 本文必須ではない
+- site選択対応
+- タグ任意
+- ログイン済みなら保存後にSupabaseへ自動同期
+
+## Commit Status
+
+- commit023: Supabase Auth
+- commit024: ユーザー別データ分離 / RLS
+- commit025: Vercel公開 / PWA確認 / バックアップ / iPhoneクイックメモ改善
