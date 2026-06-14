@@ -6,7 +6,7 @@ import {
   SITE_TYPE_LABELS,
   SITE_TYPES,
 } from './constants/knowledge'
-import { mockCards } from './data/mockCards'
+import { createSampleCards } from './data/mockCards'
 import type { CardHistory, CardStatus, CardWithTags, Conflict, RelatedCardReason, SiteType, Tag } from './types/knowledge'
 import { getRelatedCards } from './utils/relatedCards'
 import { downloadCardAsJson, downloadCardsAsJsonBundle, downloadJsonFile } from './utils/jsonExport'
@@ -268,7 +268,7 @@ function toFormState(card: CardWithTags): CardFormState {
 }
 
 function App() {
-  const [cards, setCards] = useState<CardWithTags[]>(mockCards)
+  const [cards, setCards] = useState<CardWithTags[]>([])
   const [cardHistories, setCardHistories] = useState<CardHistory[]>([])
   const [conflicts, setConflicts] = useState<Conflict[]>([])
   const [selectedConflictId, setSelectedConflictId] = useState<string | null>(null)
@@ -835,6 +835,8 @@ function App() {
   const trashCards = cards.filter((card) => card.status === 'trash')
   const trashCount = trashCards.length
   const totalTagCount = allTags.length
+  const hasActiveListFilters = Boolean(searchText.trim()) || statusFilter !== 'all' || siteFilter !== 'all' || tagFilter !== 'all'
+  const isFirstEmptyState = activeCardCount === 0 && !hasActiveListFilters
   const syncStatusLabel =
     unresolvedConflicts.length > 0
       ? '競合あり'
@@ -924,7 +926,7 @@ function App() {
     try {
       await signOutFromSupabase()
       setSession(null)
-      setCards(mockCards)
+      setCards([])
       setCardHistories([])
       setConflicts([])
       setSelectedCardId(null)
@@ -1248,6 +1250,28 @@ function App() {
 
   const exportAllCardsAsJson = () => {
     downloadCardsAsJsonBundle(exportableCards, 'all-cards')
+  }
+
+  const clearCardFilters = () => {
+    setSearchText('')
+    setStatusFilter('all')
+    setSiteFilter('all')
+    setTagFilter('all')
+  }
+
+  const addSampleCards = () => {
+    const sampleCards = createSampleCards(syncState.deviceId)
+
+    setCards((current) => [...sampleCards, ...current])
+    setExportCardIds([])
+    setSelectedCardId(sampleCards[0]?.id ?? null)
+    if (sampleCards[0]) {
+      setForm(toFormState(sampleCards[0]))
+      setEditorMode('edit')
+      setShowDetail(true)
+    }
+    markLocalChange()
+    setSyncMessage('確認用のサンプルカードを追加しました。不要になったら通常削除できます。')
   }
 
   const downloadFullBackup = () => {
@@ -2600,10 +2624,34 @@ function App() {
             ) : null}
 
             {visibleCards.length === 0 ? (
-              <div className="empty-state">
-                <strong>該当するカードがありません</strong>
-                <p>検索条件や絞り込みを変えてください。</p>
-              </div>
+              isFirstEmptyState ? (
+                <div className="empty-state empty-state-large">
+                  <span className="empty-state-icon">✍️</span>
+                  <strong>まだカードはありません</strong>
+                  <p>最初の1枚をクイックメモで作ると、Mac・iPhone間の同期確認まで一気にできます。</p>
+                  <div className="empty-state-actions">
+                    <button className="primary-button" type="button" onClick={openQuickMemo}>
+                      + クイックメモを書く
+                    </button>
+                    <button type="button" onClick={startNewCard}>
+                      通常カードを作成
+                    </button>
+                    <button type="button" onClick={addSampleCards}>
+                      サンプルカードを追加
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <strong>該当するカードがありません</strong>
+                  <p>検索条件や絞り込みを変えてください。</p>
+                  <div className="empty-state-actions">
+                    <button type="button" onClick={clearCardFilters}>
+                      絞り込みを解除
+                    </button>
+                  </div>
+                </div>
+              )
             ) : (
               <div className="cards-grid">
                 {visibleCards.map((card) => (
