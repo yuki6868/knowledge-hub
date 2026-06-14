@@ -11,7 +11,7 @@ import type { CardHistory, CardStatus, CardWithTags, Conflict, RelatedCardReason
 import { getRelatedCards } from './utils/relatedCards'
 import { downloadCardAsJson, downloadCardsAsJsonBundle } from './utils/jsonExport'
 import { downloadCardAsMarkdown, downloadCardsAsMarkdownBundle } from './utils/markdownExport'
-import { isSupabaseConfigured } from './lib/supabase'
+import { isSupabaseConfigured, supabaseConfigDebug } from './lib/supabase'
 import type { Session } from '@supabase/supabase-js'
 import {
   getCurrentSession,
@@ -303,6 +303,7 @@ function App() {
   const [authPassword, setAuthPassword] = useState('')
   const [authMessage, setAuthMessage] = useState<string | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
+  const [isAuthMenuOpen, setIsAuthMenuOpen] = useState(false)
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [isStandalone, setIsStandalone] = useState(() =>
     window.matchMedia('(display-mode: standalone)').matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone),
@@ -378,6 +379,7 @@ function App() {
 
     const unsubscribe = subscribeAuthState((_event, nextSession) => {
       setSession(nextSession)
+      setIsAuthMenuOpen(false)
     })
 
     return () => {
@@ -894,6 +896,7 @@ function App() {
           : await signUpWithEmail(email, authPassword)
 
       setSession(nextSession)
+      if (nextSession) setIsAuthMenuOpen(false)
       setAuthPassword('')
       setAuthMessage(
         authMode === 'login'
@@ -934,6 +937,7 @@ function App() {
         conflictCount: 0,
         lastSyncedAt: new Date().toISOString(),
       }))
+      setIsAuthMenuOpen(false)
       setAuthMessage('ログアウトしました。')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'ログアウトに失敗しました。'
@@ -942,42 +946,54 @@ function App() {
   }
 
   const authUserLabel = session?.user.email ?? '未ログイン'
-  const authBar = isSupabaseConfigured ? (
-    <div className="auth-user-box" aria-label="ログイン状態">
-      <div>
-        <span>ログイン中</span>
-        <strong>{authUserLabel}</strong>
+  const authInitial = session?.user.email?.trim().charAt(0).toUpperCase() ?? '？'
+  const authStatusLabel = !isSupabaseConfigured
+    ? 'Supabase未設定'
+    : authLoading
+      ? '確認中'
+      : session
+        ? 'ログイン中'
+        : 'ログインする'
+  const authPanel = (
+    <div className="auth-popover" role="dialog" aria-label="アカウントメニュー">
+      <div className="auth-popover-header">
+        <span className="auth-avatar auth-avatar-large">{session ? authInitial : '？'}</span>
+        <div>
+          <span>{session ? 'Knowledge Hubにログイン中' : 'アカウント'}</span>
+          <strong>{authUserLabel}</strong>
+        </div>
       </div>
-      <button className="ghost-button" type="button" onClick={handleSignOut}>
-        ログアウト
-      </button>
-    </div>
-  ) : null
 
-  if (isSupabaseConfigured && authLoading && !session) {
-    return (
-      <main className="app-shell auth-screen">
-        <section className="auth-card">
-          <p className="eyebrow">Knowledge Hub Auth</p>
-          <h1>ログイン状態を確認中</h1>
-          <p>Supabase Authのセッションを復元しています。</p>
-        </section>
-      </main>
-    )
-  }
-
-  if (isSupabaseConfigured && !session) {
-    return (
-      <main className="app-shell auth-screen">
-        <section className="auth-card" aria-label="ログイン">
-          <div className="auth-card-header">
-            <p className="eyebrow">Knowledge Hub Auth</p>
-            <h1>知識カードにログイン</h1>
-            <p>
-              Supabase Authでログインすると、Mac・iPhone間の同期を同じアカウントで使えます。
-              Googleログイン、またはメールアドレスで開始できます。
-            </p>
+      {!isSupabaseConfigured ? (
+        <>
+          <p className="auth-popover-copy">
+            右上のアカウント入口は常に表示しています。ログインを使うには frontend/.env.local がViteに読み込まれていません。Viteを再起動してください。起動場所が違っても読めるよう vite.config.ts 側も修正済みです。
+          </p>
+          <div className="auth-config-card">
+            <span>必要な環境変数</span>
+            <code>VITE_SUPABASE_URL</code>
+            <code>VITE_SUPABASE_ANON_KEY</code>
+            <small>
+              URL: {supabaseConfigDebug.hasUrl ? '読み込み済み' : '未読込'} / KEY:{' '}
+              {supabaseConfigDebug.hasKey ? '読み込み済み' : '未読込'} / 判定:{' '}
+              {supabaseConfigDebug.isConfigured ? '設定済み' : '未設定'} / mode: {supabaseConfigDebug.mode}
+            </small>
           </div>
+        </>
+      ) : session ? (
+        <>
+          <p className="auth-popover-copy">
+            このアカウントでSupabase同期を使っています。別端末でも同じアカウントでログインするとカードを共有できます。
+          </p>
+          <button className="ghost-button auth-wide-button" type="button" onClick={handleSignOut} disabled={authLoading}>
+            ログアウト
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="auth-popover-copy">
+            ログインしなくてもローカル確認はできます。GoogleまたはメールでログインするとSupabase同期を使えます。
+          </p>
 
           <button className="google-auth-button" type="button" onClick={handleGoogleLogin} disabled={authLoading}>
             Googleでログイン
@@ -1007,7 +1023,7 @@ function App() {
               />
             </label>
 
-            <button className="primary-button" type="submit" disabled={authLoading}>
+            <button className="primary-button auth-wide-button" type="submit" disabled={authLoading}>
               {authLoading ? '処理中...' : authMode === 'login' ? 'メールでログイン' : 'メールで登録'}
             </button>
           </form>
@@ -1023,18 +1039,30 @@ function App() {
           >
             {authMode === 'login' ? '新規登録はこちら' : 'ログインに戻る'}
           </button>
+        </>
+      )}
 
-          {authMessage ? <p className="auth-message">{authMessage}</p> : null}
-          {authError ? <p className="auth-error">{authError}</p> : null}
-
-          <div className="auth-note">
-            <strong>Supabase側の設定</strong>
-            <span>Authentication → Providers で Google と Email を有効化してください。</span>
-          </div>
-        </section>
-      </main>
-    )
-  }
+      {authMessage ? <p className="auth-message">{authMessage}</p> : null}
+      {authError ? <p className="auth-error">{authError}</p> : null}
+    </div>
+  )
+  const authBar = (
+    <div className="auth-menu" aria-label="ログイン状態">
+      <button
+        className={`auth-user-button ${session ? 'is-signed-in' : ''} ${!isSupabaseConfigured ? 'is-unconfigured' : ''}`}
+        type="button"
+        onClick={() => setIsAuthMenuOpen((current) => !current)}
+        aria-expanded={isAuthMenuOpen}
+      >
+        <span className="auth-avatar">{session ? authInitial : '？'}</span>
+        <span className="auth-user-text">
+          <small>{authStatusLabel}</small>
+          <strong>{authUserLabel}</strong>
+        </span>
+      </button>
+      {isAuthMenuOpen ? authPanel : null}
+    </div>
+  )
 
   const installPwa = async () => {
     if (!installPrompt) {
