@@ -1,11 +1,17 @@
-import { supabase } from '../lib/supabase'
-import type { CardHistory, CardWithTags, Tag } from '../types/knowledge'
-import type { Database } from '../types/database'
+import { supabase } from "../lib/supabase";
+import type {
+  CardHistory,
+  CardWithTags,
+  Conflict,
+  Tag,
+} from "../types/knowledge";
+import type { Database } from "../types/database";
 
-type CardRow = Database['public']['Tables']['cards']['Row']
-type TagRow = Database['public']['Tables']['tags']['Row']
-type CardTagRow = Database['public']['Tables']['card_tags']['Row']
-type CardHistoryRow = Database['public']['Tables']['card_histories']['Row']
+type CardRow = Database["public"]["Tables"]["cards"]["Row"];
+type TagRow = Database["public"]["Tables"]["tags"]["Row"];
+type CardTagRow = Database["public"]["Tables"]["card_tags"]["Row"];
+type CardHistoryRow = Database["public"]["Tables"]["card_histories"]["Row"];
+type ConflictRow = Database["public"]["Tables"]["conflicts"]["Row"];
 
 function toCardRow(card: CardWithTags): CardRow {
   return {
@@ -17,27 +23,28 @@ function toCardRow(card: CardWithTags): CardRow {
     created_at: card.created_at,
     updated_at: card.updated_at,
     device_id: card.device_id,
-    deleted_at: card.deleted_at ?? (card.status === 'trash' ? card.updated_at : null),
-  }
+    deleted_at:
+      card.deleted_at ?? (card.status === "trash" ? card.updated_at : null),
+  };
 }
 
 function toTagRows(cards: CardWithTags[]): TagRow[] {
-  const tagMap = new Map<string, Tag>()
+  const tagMap = new Map<string, Tag>();
 
   cards.forEach((card) => {
     card.tags.forEach((tag) => {
-      const current = tagMap.get(tag.name)
+      const current = tagMap.get(tag.name);
       if (!current || tag.created_at < current.created_at) {
-        tagMap.set(tag.name, tag)
+        tagMap.set(tag.name, tag);
       }
-    })
-  })
+    });
+  });
 
   return Array.from(tagMap.values()).map((tag) => ({
     id: tag.id,
     name: tag.name,
     created_at: tag.created_at,
-  }))
+  }));
 }
 
 function toCardTagRows(cards: CardWithTags[]): CardTagRow[] {
@@ -46,9 +53,8 @@ function toCardTagRows(cards: CardWithTags[]): CardTagRow[] {
       card_id: card.id,
       tag_id: tag.id,
     })),
-  )
+  );
 }
-
 
 function toCardHistoryRow(history: CardHistory): CardHistoryRow {
   return {
@@ -57,7 +63,7 @@ function toCardHistoryRow(history: CardHistory): CardHistoryRow {
     title: history.title,
     body: history.body,
     saved_at: history.saved_at,
-  }
+  };
 }
 
 function toCardHistory(row: CardHistoryRow): CardHistory {
@@ -67,32 +73,61 @@ function toCardHistory(row: CardHistoryRow): CardHistory {
     title: row.title,
     body: row.body,
     saved_at: row.saved_at,
-  }
+  };
+}
+
+function toConflictRow(conflict: Conflict): ConflictRow {
+  return {
+    id: conflict.id,
+    card_id: conflict.card_id,
+    local_title: conflict.local_title,
+    local_body: conflict.local_body,
+    remote_title: conflict.remote_title,
+    remote_body: conflict.remote_body,
+    created_at: conflict.created_at,
+    resolved: conflict.resolved,
+  };
+}
+
+function toConflict(row: ConflictRow): Conflict {
+  return {
+    id: row.id,
+    card_id: row.card_id,
+    local_title: row.local_title,
+    local_body: row.local_body,
+    remote_title: row.remote_title,
+    remote_body: row.remote_body,
+    created_at: row.created_at,
+    resolved: row.resolved,
+  };
 }
 
 export async function fetchCardsFromSupabase(): Promise<CardWithTags[]> {
   if (!supabase) {
-    throw new Error('Supabase URL または anon key が設定されていません。')
+    throw new Error("Supabase URL または anon key が設定されていません。");
   }
 
   const [cardsResult, tagsResult, cardTagsResult] = await Promise.all([
-    supabase.from('cards').select('*').order('updated_at', { ascending: false }),
-    supabase.from('tags').select('*'),
-    supabase.from('card_tags').select('*'),
-  ])
+    supabase
+      .from("cards")
+      .select("*")
+      .order("updated_at", { ascending: false }),
+    supabase.from("tags").select("*"),
+    supabase.from("card_tags").select("*"),
+  ]);
 
-  if (cardsResult.error) throw cardsResult.error
-  if (tagsResult.error) throw tagsResult.error
-  if (cardTagsResult.error) throw cardTagsResult.error
+  if (cardsResult.error) throw cardsResult.error;
+  if (tagsResult.error) throw tagsResult.error;
+  if (cardTagsResult.error) throw cardTagsResult.error;
 
-  const tagsById = new Map((tagsResult.data ?? []).map((tag) => [tag.id, tag]))
-  const tagIdsByCardId = new Map<string, string[]>()
+  const tagsById = new Map((tagsResult.data ?? []).map((tag) => [tag.id, tag]));
+  const tagIdsByCardId = new Map<string, string[]>();
 
-  ;(cardTagsResult.data ?? []).forEach((row) => {
-    const current = tagIdsByCardId.get(row.card_id) ?? []
-    current.push(row.tag_id)
-    tagIdsByCardId.set(row.card_id, current)
-  })
+  (cardTagsResult.data ?? []).forEach((row) => {
+    const current = tagIdsByCardId.get(row.card_id) ?? [];
+    current.push(row.tag_id);
+    tagIdsByCardId.set(row.card_id, current);
+  });
 
   return (cardsResult.data ?? []).map((card) => ({
     id: card.id,
@@ -112,168 +147,270 @@ export async function fetchCardsFromSupabase(): Promise<CardWithTags[]> {
         name: tag.name,
         created_at: tag.created_at,
       })),
-  }))
+  }));
 }
-
 
 export async function fetchCardHistoriesFromSupabase(): Promise<CardHistory[]> {
   if (!supabase) {
-    throw new Error('Supabase URL または anon key が設定されていません。')
+    throw new Error("Supabase URL または anon key が設定されていません。");
   }
 
   const { data, error } = await supabase
-    .from('card_histories')
-    .select('*')
-    .order('saved_at', { ascending: false })
+    .from("card_histories")
+    .select("*")
+    .order("saved_at", { ascending: false });
 
-  if (error) throw error
+  if (error) throw error;
 
-  return (data ?? []).map(toCardHistory)
+  return (data ?? []).map(toCardHistory);
 }
 
-export async function pushCardsToSupabase(cards: CardWithTags[]): Promise<void> {
+export async function fetchConflictsFromSupabase(): Promise<Conflict[]> {
   if (!supabase) {
-    throw new Error('Supabase URL または anon key が設定されていません。')
+    throw new Error("Supabase URL または anon key が設定されていません。");
   }
 
-  const cardRows = cards.map(toCardRow)
-  const tagRows = toTagRows(cards)
-  const cardTagRows = toCardTagRows(cards)
+  const { data, error } = await supabase
+    .from("conflicts")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+
+  return (data ?? []).map(toConflict);
+}
+
+export async function pushCardsToSupabase(
+  cards: CardWithTags[],
+): Promise<void> {
+  if (!supabase) {
+    throw new Error("Supabase URL または anon key が設定されていません。");
+  }
+
+  const cardRows = cards.map(toCardRow);
+  const tagRows = toTagRows(cards);
+  const cardTagRows = toCardTagRows(cards);
 
   if (cardRows.length > 0) {
-    const { error } = await supabase.from('cards').upsert(cardRows, { onConflict: 'id' })
-    if (error) throw error
+    const { error } = await supabase
+      .from("cards")
+      .upsert(cardRows, { onConflict: "id" });
+    if (error) throw error;
   }
 
   if (tagRows.length > 0) {
-    const { error } = await supabase.from('tags').upsert(tagRows, { onConflict: 'id' })
-    if (error) throw error
+    const { error } = await supabase
+      .from("tags")
+      .upsert(tagRows, { onConflict: "id" });
+    if (error) throw error;
   }
 
-  const cardIds = cards.map((card) => card.id)
+  const cardIds = cards.map((card) => card.id);
   if (cardIds.length > 0) {
-    const { error } = await supabase.from('card_tags').delete().in('card_id', cardIds)
-    if (error) throw error
+    const { error } = await supabase
+      .from("card_tags")
+      .delete()
+      .in("card_id", cardIds);
+    if (error) throw error;
   }
 
   if (cardTagRows.length > 0) {
-    const { error } = await supabase.from('card_tags').upsert(cardTagRows, { onConflict: 'card_id,tag_id' })
-    if (error) throw error
+    const { error } = await supabase
+      .from("card_tags")
+      .upsert(cardTagRows, { onConflict: "card_id,tag_id" });
+    if (error) throw error;
   }
 }
 
-
-export async function pushCardHistoriesToSupabase(histories: CardHistory[]): Promise<void> {
+export async function pushCardHistoriesToSupabase(
+  histories: CardHistory[],
+): Promise<void> {
   if (!supabase) {
-    throw new Error('Supabase URL または anon key が設定されていません。')
+    throw new Error("Supabase URL または anon key が設定されていません。");
   }
 
-  if (histories.length === 0) return
+  if (histories.length === 0) return;
 
   const { error } = await supabase
-    .from('card_histories')
-    .upsert(histories.map(toCardHistoryRow), { onConflict: 'id' })
+    .from("card_histories")
+    .upsert(histories.map(toCardHistoryRow), { onConflict: "id" });
 
-  if (error) throw error
+  if (error) throw error;
 }
 
-export async function insertCardHistoryToSupabase(history: CardHistory): Promise<void> {
+export async function insertCardHistoryToSupabase(
+  history: CardHistory,
+): Promise<void> {
   if (!supabase) {
-    throw new Error('Supabase URL または anon key が設定されていません。')
+    throw new Error("Supabase URL または anon key が設定されていません。");
   }
 
   const { error } = await supabase
-    .from('card_histories')
-    .upsert(toCardHistoryRow(history), { onConflict: 'id' })
+    .from("card_histories")
+    .upsert(toCardHistoryRow(history), { onConflict: "id" });
 
-  if (error) throw error
+  if (error) throw error;
 }
 
+export async function pushConflictsToSupabase(
+  conflicts: Conflict[],
+): Promise<void> {
+  if (!supabase) {
+    throw new Error("Supabase URL または anon key が設定されていません。");
+  }
 
+  if (conflicts.length === 0) return;
 
-type RealtimeStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
+  const { error } = await supabase
+    .from("conflicts")
+    .upsert(conflicts.map(toConflictRow), { onConflict: "id" });
+
+  if (error) throw error;
+}
+
+export async function insertConflictToSupabase(
+  conflict: Conflict,
+): Promise<void> {
+  if (!supabase) {
+    throw new Error("Supabase URL または anon key が設定されていません。");
+  }
+
+  const { error } = await supabase
+    .from("conflicts")
+    .upsert(toConflictRow(conflict), { onConflict: "id" });
+
+  if (error) throw error;
+}
+
+export async function resolveConflictInSupabase(
+  conflictId: string,
+): Promise<void> {
+  if (!supabase) {
+    throw new Error("Supabase URL または anon key が設定されていません。");
+  }
+
+  const { error } = await supabase
+    .from("conflicts")
+    .update({ resolved: true })
+    .eq("id", conflictId);
+
+  if (error) throw error;
+}
+
+type RealtimeStatus = "connecting" | "connected" | "disconnected" | "error";
 
 type CardsRealtimeOptions = {
-  deviceId: string
-  onStatusChange?: (status: RealtimeStatus) => void
-  onRemoteCards: (cards: CardWithTags[], histories: CardHistory[], eventLabel: string) => void
-  onError?: (message: string) => void
-}
+  deviceId: string;
+  onStatusChange?: (status: RealtimeStatus) => void;
+  onRemoteCards: (
+    cards: CardWithTags[],
+    histories: CardHistory[],
+    conflicts: Conflict[],
+    eventLabel: string,
+  ) => void;
+  onError?: (message: string) => void;
+};
 
-export function subscribeCardsRealtime(options: CardsRealtimeOptions): () => void {
+export function subscribeCardsRealtime(
+  options: CardsRealtimeOptions,
+): () => void {
   if (!supabase) {
-    options.onStatusChange?.('disconnected')
-    options.onError?.('Supabase URL または anon key が設定されていません。')
-    return () => undefined
+    options.onStatusChange?.("disconnected");
+    options.onError?.("Supabase URL または anon key が設定されていません。");
+    return () => undefined;
   }
 
-  const client = supabase
-  let disposed = false
-  let reloadTimerId: number | null = null
+  const client = supabase;
+  let disposed = false;
+  let reloadTimerId: number | null = null;
 
   const reloadRemoteCards = (eventLabel: string) => {
     if (reloadTimerId !== null) {
-      window.clearTimeout(reloadTimerId)
+      window.clearTimeout(reloadTimerId);
     }
 
     reloadTimerId = window.setTimeout(async () => {
-      reloadTimerId = null
-      if (disposed) return
+      reloadTimerId = null;
+      if (disposed) return;
 
       try {
-        const [cards, histories] = await Promise.all([
+        const [cards, histories, conflicts] = await Promise.all([
           fetchCardsFromSupabase(),
           fetchCardHistoriesFromSupabase(),
-        ])
+          fetchConflictsFromSupabase(),
+        ]);
         if (!disposed) {
-          options.onRemoteCards(cards, histories, eventLabel)
+          options.onRemoteCards(cards, histories, conflicts, eventLabel);
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Realtime更新後の再読込に失敗しました。'
-        options.onStatusChange?.('error')
-        options.onError?.(message)
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Realtime更新後の再読込に失敗しました。";
+        options.onStatusChange?.("error");
+        options.onError?.(message);
       }
-    }, 450)
-  }
+    }, 450);
+  };
 
-  const handlePostgresChange = (payload: { eventType: string; new?: { device_id?: string | null } | null }) => {
+  const handlePostgresChange = (payload: {
+    eventType: string;
+    new?: { device_id?: string | null } | null;
+  }) => {
     if (payload.new?.device_id && payload.new.device_id === options.deviceId) {
-      return
+      return;
     }
 
-    reloadRemoteCards(payload.eventType)
-  }
+    reloadRemoteCards(payload.eventType);
+  };
 
-  options.onStatusChange?.('connecting')
+  options.onStatusChange?.("connecting");
 
   const channel = client
-    .channel('knowledge-hub-realtime')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'cards' }, handlePostgresChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'tags' }, () => reloadRemoteCards('TAG_CHANGE'))
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'card_tags' }, () => reloadRemoteCards('CARD_TAG_CHANGE'))
+    .channel("knowledge-hub-realtime")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "cards" },
+      handlePostgresChange,
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "tags" },
+      () => reloadRemoteCards("TAG_CHANGE"),
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "card_tags" },
+      () => reloadRemoteCards("CARD_TAG_CHANGE"),
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "conflicts" },
+      () => reloadRemoteCards("CONFLICT_CHANGE"),
+    )
     .subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        options.onStatusChange?.('connected')
-        return
+      if (status === "SUBSCRIBED") {
+        options.onStatusChange?.("connected");
+        return;
       }
 
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        options.onStatusChange?.('error')
-        options.onError?.('Supabase Realtimeの接続に失敗しました。')
-        return
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        options.onStatusChange?.("error");
+        options.onError?.("Supabase Realtimeの接続に失敗しました。");
+        return;
       }
 
-      if (status === 'CLOSED') {
-        options.onStatusChange?.('disconnected')
+      if (status === "CLOSED") {
+        options.onStatusChange?.("disconnected");
       }
-    })
+    });
 
   return () => {
-    disposed = true
+    disposed = true;
     if (reloadTimerId !== null) {
-      window.clearTimeout(reloadTimerId)
+      window.clearTimeout(reloadTimerId);
     }
-    options.onStatusChange?.('disconnected')
-    void client.removeChannel(channel)
-  }
+    options.onStatusChange?.("disconnected");
+    void client.removeChannel(channel);
+  };
 }

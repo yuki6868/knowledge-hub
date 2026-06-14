@@ -1,0 +1,21 @@
+{
+  "name": "Knowledge Hub",
+  "short_name": "K Hub",
+  "description": "知識カードをメモから記事化まで同期管理するアプリ",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0f172a",
+  "theme_color": "#2563eb",
+  "categories": ["productivity", "utilities", "education"],
+  "lang": "ja-JP",
+  "icons": [
+    {
+      "src": "/pwa-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

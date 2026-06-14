@@ -15,9 +15,13 @@ import { isSupabaseConfigured } from './lib/supabase'
 import {
   fetchCardHistoriesFromSupabase,
   fetchCardsFromSupabase,
+  fetchConflictsFromSupabase,
   insertCardHistoryToSupabase,
+  insertConflictToSupabase,
   pushCardHistoriesToSupabase,
   pushCardsToSupabase,
+  pushConflictsToSupabase,
+  resolveConflictInSupabase,
   subscribeCardsRealtime,
 } from './services/supabaseCards'
 import './App.css'
@@ -29,6 +33,10 @@ type TagSortMode = 'count' | 'name'
 type EditorMode = 'new' | 'edit'
 type SyncStatus = 'synced' | 'pending' | 'conflict' | 'syncing'
 type RealtimeStatus = 'disabled' | 'connecting' | 'connected' | 'disconnected' | 'error'
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>
+}
 
 type SyncState = {
   status: SyncStatus
@@ -164,6 +172,59 @@ function getConflictPreview(localValue: string | null, remoteValue: string | nul
   return '空'
 }
 
+
+function mergeConflicts(...conflictGroups: Conflict[][]): Conflict[] {
+  const map = new Map<string, Conflict>()
+
+  conflictGroups.flat().forEach((conflict) => {
+    const current = map.get(conflict.id)
+    if (!current || conflict.created_at >= current.created_at) {
+      map.set(conflict.id, conflict)
+    }
+  })
+
+  return Array.from(map.values()).sort((a, b) => b.created_at.localeCompare(a.created_at))
+}
+
+function buildRemoteConflicts(
+  localCards: CardWithTags[],
+  remoteCards: CardWithTags[],
+  existingConflicts: Conflict[],
+): Conflict[] {
+  const localById = new Map(localCards.map((card) => [card.id, card]))
+  const unresolvedConflictCardIds = new Set(
+    existingConflicts.filter((conflict) => !conflict.resolved).map((conflict) => conflict.card_id),
+  )
+  const now = new Date().toISOString()
+
+  return remoteCards.flatMap((remoteCard) => {
+    const localCard = localById.get(remoteCard.id)
+    if (!localCard) return []
+    if (unresolvedConflictCardIds.has(remoteCard.id)) return []
+
+    const hasContentDiff = localCard.title !== remoteCard.title || localCard.body !== remoteCard.body
+    const hasMetaDiff = localCard.site !== remoteCard.site || localCard.status !== remoteCard.status
+    const localTagNames = localCard.tags.map((tag) => tag.name).sort().join(',')
+    const remoteTagNames = remoteCard.tags.map((tag) => tag.name).sort().join(',')
+    const hasTagDiff = localTagNames !== remoteTagNames
+
+    if (!hasContentDiff && !hasMetaDiff && !hasTagDiff) return []
+
+    return [
+      {
+        id: createId('conflict'),
+        card_id: remoteCard.id,
+        local_title: localCard.title,
+        local_body: localCard.body,
+        remote_title: remoteCard.title,
+        remote_body: remoteCard.body,
+        created_at: now,
+        resolved: false,
+      },
+    ]
+  })
+}
+
 function hasTag(card: CardWithTags, tagName: string): boolean {
   return card.tags.some((tag) => tag.name === tagName)
 }
@@ -225,7 +286,14 @@ function App() {
   }))
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
   const [syncError, setSyncError] = useState<string | null>(null)
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
+  const [isStandalone, setIsStandalone] = useState(() =>
+    window.matchMedia('(display-mode: standalone)').matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone),
+  )
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine)
   const syncStateRef = useRef(syncState)
+  const cardsRef = useRef(cards)
+  const conflictsRef = useRef(conflicts)
 
   const selectedCard = useMemo(() => {
     return cards.find((card) => card.id === selectedCardId) ?? null
@@ -269,10 +337,50 @@ function App() {
     return () => window.clearTimeout(timerId)
   }, [syncError, syncMessage])
 
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(display-mode: standalone)')
+    const updateStandalone = () => {
+      setIsStandalone(mediaQuery.matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone))
+    }
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault()
+      setInstallPrompt(event as BeforeInstallPromptEvent)
+    }
+    const handleAppInstalled = () => {
+      setInstallPrompt(null)
+      setIsStandalone(true)
+      setSyncMessage('Knowledge Hubをホーム画面に追加しました。')
+    }
+    const handleOnline = () => setIsOnline(true)
+    const handleOffline = () => setIsOnline(false)
+
+    updateStandalone()
+    mediaQuery.addEventListener('change', updateStandalone)
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt)
+    window.addEventListener('appinstalled', handleAppInstalled)
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+
+    return () => {
+      mediaQuery.removeEventListener('change', updateStandalone)
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt)
+      window.removeEventListener('appinstalled', handleAppInstalled)
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [])
 
   useEffect(() => {
     syncStateRef.current = syncState
   }, [syncState])
+
+  useEffect(() => {
+    cardsRef.current = cards
+  }, [cards])
+
+  useEffect(() => {
+    conflictsRef.current = conflicts
+  }, [conflicts])
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -285,20 +393,48 @@ function App() {
       onStatusChange: (realtimeStatus) => {
         setSyncState((current) => ({ ...current, realtimeStatus }))
       },
-      onRemoteCards: (remoteCards, remoteHistories, eventLabel) => {
+      onRemoteCards: (remoteCards, remoteHistories, remoteConflicts, eventLabel) => {
         const currentSyncState = syncStateRef.current
 
         if (currentSyncState.pendingCount > 0) {
-          setSyncMessage('別端末の更新を検知しました。ローカル未同期変更があるため、自動反映は保留しました。')
+          const localCards = cardsRef.current
+          const currentConflicts = conflictsRef.current
+          const generatedConflicts = buildRemoteConflicts(localCards, remoteCards, mergeConflicts(currentConflicts, remoteConflicts))
+          const nextConflicts = mergeConflicts(generatedConflicts, currentConflicts, remoteConflicts)
+          setConflicts(nextConflicts)
+          setCardHistories(remoteHistories)
+          setSelectedConflictId((current) => current ?? nextConflicts.find((conflict) => !conflict.resolved)?.id ?? null)
+          setSyncState((current) => ({
+            ...current,
+            status: generatedConflicts.length > 0 || nextConflicts.some((conflict) => !conflict.resolved) ? 'conflict' : 'pending',
+            conflictCount: nextConflicts.filter((conflict) => !conflict.resolved).length,
+          }))
+
+          if (generatedConflicts.length > 0 && isSupabaseConfigured) {
+            void pushConflictsToSupabase(generatedConflicts).catch((error) => {
+              const message = error instanceof Error ? error.message : '競合のSupabase保存に失敗しました。'
+              setSyncError(message)
+            })
+          }
+
+          setSyncMessage(
+            generatedConflicts.length > 0
+              ? `別端末の更新から競合${generatedConflicts.length}件を作成しました。(${eventLabel})`
+              : '別端末の更新を検知しました。ローカル未同期変更があるため、自動反映は保留しました。',
+          )
           return
         }
 
+        const nextConflicts = mergeConflicts(remoteConflicts)
+        const nextConflictCount = nextConflicts.filter((conflict) => !conflict.resolved).length
         setCards(remoteCards)
         setCardHistories(remoteHistories)
+        setConflicts(nextConflicts)
         setSyncState((current) => ({
           ...current,
-          status: current.conflictCount > 0 ? 'conflict' : 'synced',
+          status: nextConflictCount > 0 ? 'conflict' : 'synced',
           pendingCount: 0,
+          conflictCount: nextConflictCount,
           lastSyncedAt: new Date().toISOString(),
         }))
         setSyncMessage(`Realtime更新を反映しました。(${eventLabel})`)
@@ -336,12 +472,17 @@ function App() {
     setSyncState((current) => ({ ...current, status: 'syncing' }))
 
     try {
-      const [remoteCards, remoteHistories] = await Promise.all([
+      const [remoteCards, remoteHistories, remoteConflicts] = await Promise.all([
         fetchCardsFromSupabase(),
         fetchCardHistoriesFromSupabase(),
+        fetchConflictsFromSupabase(),
       ])
       setCards(remoteCards)
       setCardHistories(remoteHistories)
+      const nextConflicts = mergeConflicts(remoteConflicts)
+      const nextConflictCount = nextConflicts.filter((conflict) => !conflict.resolved).length
+      setConflicts(nextConflicts)
+      setSelectedConflictId(nextConflicts.find((conflict) => !conflict.resolved)?.id ?? null)
       setSelectedCardId(null)
       setShowDetail(false)
       setShowTrash(false)
@@ -354,7 +495,7 @@ function App() {
         conflictCount: unresolvedConflicts.length,
         lastSyncedAt: new Date().toISOString(),
       }))
-      setSyncMessage(`Supabaseからカード${remoteCards.length}件・履歴${remoteHistories.length}件を読み込みました。`)
+      setSyncMessage(`Supabaseからカード${remoteCards.length}件・履歴${remoteHistories.length}件・競合${nextConflictCount}件を読み込みました。`)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Supabaseからの読み込みに失敗しました。'
       setSyncError(message)
@@ -374,6 +515,7 @@ function App() {
       await Promise.all([
         pushCardsToSupabase(cards),
         pushCardHistoriesToSupabase(cardHistories),
+        pushConflictsToSupabase(conflicts),
       ])
       setSyncState((current) => ({
         ...current,
@@ -382,7 +524,7 @@ function App() {
         conflictCount: unresolvedConflicts.length,
         lastSyncedAt: new Date().toISOString(),
       }))
-      setSyncMessage(`Supabaseへカード${cards.length}件・履歴${cardHistories.length}件を同期しました。`)
+      setSyncMessage(`Supabaseへカード${cards.length}件・履歴${cardHistories.length}件・競合${conflicts.length}件を同期しました。`)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Supabaseへの同期に失敗しました。'
       setSyncError(message)
@@ -412,8 +554,15 @@ function App() {
       resolved: false,
     }
 
-    setConflicts((current) => [conflict, ...current])
+    setConflicts((current) => mergeConflicts([conflict], current))
     setSelectedConflictId(conflict.id)
+
+    if (isSupabaseConfigured) {
+      void insertConflictToSupabase(conflict).catch((error) => {
+        const message = error instanceof Error ? error.message : '競合のSupabase保存に失敗しました。'
+        setSyncError(message)
+      })
+    }
     setSyncState((current) => ({
       ...current,
       status: 'conflict',
@@ -455,17 +604,35 @@ function App() {
     )
     setSelectedConflictId(null)
 
+    if (isSupabaseConfigured) {
+      void resolveConflictInSupabase(conflictId).catch((error) => {
+        const message = error instanceof Error ? error.message : '競合解決状態のSupabase保存に失敗しました。'
+        setSyncError(message)
+      })
+    }
+
     const nextConflictCount = Math.max(unresolvedConflicts.length - 1, 0)
     setSyncState((current) => ({
       ...current,
-      status: nextConflictCount > 0 ? 'conflict' : current.pendingCount > 0 ? 'pending' : 'synced',
+      status: nextConflictCount > 0 ? 'conflict' : 'pending',
+      pendingCount: current.pendingCount + 1,
       conflictCount: nextConflictCount,
     }))
+    setSyncMessage('競合を解決しました。採用した版をSupabaseへ同期してください。')
   }
 
   const resolveConflicts = () => {
-    setConflicts((current) => current.map((conflict) => ({ ...conflict, resolved: true })))
+    const resolvedConflicts = conflicts.map((conflict) => ({ ...conflict, resolved: true }))
+    setConflicts(resolvedConflicts)
     setSelectedConflictId(null)
+
+    if (isSupabaseConfigured) {
+      void pushConflictsToSupabase(resolvedConflicts).catch((error) => {
+        const message = error instanceof Error ? error.message : '競合解決状態のSupabase保存に失敗しました。'
+        setSyncError(message)
+      })
+    }
+
     setSyncState((current) => ({
       ...current,
       status: current.pendingCount > 0 ? 'pending' : 'synced',
@@ -631,6 +798,26 @@ function App() {
           : syncState.realtimeStatus === 'disconnected'
             ? '切断'
             : '未使用'
+  const pwaStatusLabel = isStandalone ? 'ホーム画面起動中' : installPrompt ? '追加できます' : 'ブラウザ起動中'
+  const networkStatusLabel = isOnline ? 'オンライン' : 'オフライン'
+
+  const installPwa = async () => {
+    if (!installPrompt) {
+      setSyncMessage('iPhoneの場合はSafariの共有ボタンから「ホーム画面に追加」を選んでください。')
+      return
+    }
+
+    const promptEvent = installPrompt
+    setInstallPrompt(null)
+    await promptEvent.prompt()
+    const choice = await promptEvent.userChoice
+
+    if (choice.outcome === 'accepted') {
+      setSyncMessage('Knowledge Hubをホーム画面に追加しました。')
+    } else {
+      setSyncMessage('ホーム画面への追加をキャンセルしました。')
+    }
+  }
 
   const openQuickMemo = () => {
     setQuickMemoTitle('')
@@ -1705,6 +1892,14 @@ function App() {
             <span>Supabase</span>
             <strong>{isSupabaseConfigured ? '設定済み' : '未設定'}</strong>
           </div>
+          <div>
+            <span>PWA</span>
+            <strong>{pwaStatusLabel}</strong>
+          </div>
+          <div>
+            <span>Network</span>
+            <strong>{networkStatusLabel}</strong>
+          </div>
         </div>
 
         {syncMessage ? <p className="sync-message">{syncMessage}</p> : null}
@@ -1734,6 +1929,14 @@ function App() {
           <button type="button" onClick={resolveConflicts} disabled={syncState.conflictCount === 0}>
             競合解決済みにする
           </button>
+          <button type="button" onClick={installPwa} disabled={isStandalone}>
+            {isStandalone ? 'ホーム画面追加済み' : installPrompt ? 'ホーム画面に追加' : 'iPhone追加手順を表示'}
+          </button>
+        </div>
+
+        <div className="pwa-help">
+          <strong>iPhone対応</strong>
+          <span>Safariで開き、共有ボタン → ホーム画面に追加。追加後もSupabase同期・Realtime同期をそのまま使えます。</span>
         </div>
       </section>
 
@@ -1750,7 +1953,7 @@ function App() {
         {unresolvedConflicts.length === 0 ? (
           <div className="conflict-empty">
             <strong>未解決の競合はありません</strong>
-            <p>同期実装後は、競合が起きたカードだけここに表示します。</p>
+            <p>未同期変更がある状態で別端末更新を受け取ると、Supabase上の競合としてここに表示します。</p>
           </div>
         ) : (
           <div className="conflict-layout">
