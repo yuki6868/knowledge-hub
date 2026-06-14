@@ -311,6 +311,7 @@ function App() {
   const syncStateRef = useRef(syncState)
   const cardsRef = useRef(cards)
   const conflictsRef = useRef(conflicts)
+  const activeUserId = session?.user.id ?? null
 
   const selectedCard = useMemo(() => {
     return cards.find((card) => card.id === selectedCardId) ?? null
@@ -432,13 +433,14 @@ function App() {
   }, [conflicts])
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
+    if (!isSupabaseConfigured || !activeUserId) {
       setSyncState((current) => ({ ...current, realtimeStatus: 'disabled' }))
       return
     }
 
     const unsubscribe = subscribeCardsRealtime({
       deviceId: syncState.deviceId,
+      userId: activeUserId,
       onStatusChange: (realtimeStatus) => {
         setSyncState((current) => ({ ...current, realtimeStatus }))
       },
@@ -460,7 +462,7 @@ function App() {
           }))
 
           if (generatedConflicts.length > 0 && isSupabaseConfigured) {
-            void pushConflictsToSupabase(generatedConflicts).catch((error) => {
+            void pushConflictsToSupabase(generatedConflicts, activeUserId).catch((error) => {
               const message = error instanceof Error ? error.message : '競合のSupabase保存に失敗しました。'
               setSyncError(message)
             })
@@ -494,7 +496,7 @@ function App() {
     })
 
     return unsubscribe
-  }, [syncState.deviceId])
+  }, [activeUserId, syncState.deviceId])
 
   const markLocalChange = () => {
     setSyncState((current) => ({
@@ -516,15 +518,20 @@ function App() {
   }
 
   const loadFromSupabase = async () => {
+    if (!activeUserId) {
+      setSyncError('ログイン後にSupabaseから読み込めます。')
+      return
+    }
+
     setSyncError(null)
     setSyncMessage(null)
     setSyncState((current) => ({ ...current, status: 'syncing' }))
 
     try {
       const [remoteCards, remoteHistories, remoteConflicts] = await Promise.all([
-        fetchCardsFromSupabase(),
-        fetchCardHistoriesFromSupabase(),
-        fetchConflictsFromSupabase(),
+        fetchCardsFromSupabase(activeUserId),
+        fetchCardHistoriesFromSupabase(activeUserId),
+        fetchConflictsFromSupabase(activeUserId),
       ])
       setCards(remoteCards)
       setCardHistories(remoteHistories)
@@ -556,15 +563,20 @@ function App() {
   }
 
   const syncToSupabase = async () => {
+    if (!activeUserId) {
+      setSyncError('ログイン後にSupabaseへ同期できます。')
+      return
+    }
+
     setSyncError(null)
     setSyncMessage(null)
     setSyncState((current) => ({ ...current, status: 'syncing' }))
 
     try {
       await Promise.all([
-        pushCardsToSupabase(cards),
-        pushCardHistoriesToSupabase(cardHistories),
-        pushConflictsToSupabase(conflicts),
+        pushCardsToSupabase(cards, activeUserId),
+        pushCardHistoriesToSupabase(cardHistories, activeUserId),
+        pushConflictsToSupabase(conflicts, activeUserId),
       ])
       setSyncState((current) => ({
         ...current,
@@ -606,8 +618,8 @@ function App() {
     setConflicts((current) => mergeConflicts([conflict], current))
     setSelectedConflictId(conflict.id)
 
-    if (isSupabaseConfigured) {
-      void insertConflictToSupabase(conflict).catch((error) => {
+    if (isSupabaseConfigured && activeUserId) {
+      void insertConflictToSupabase(conflict, activeUserId).catch((error) => {
         const message = error instanceof Error ? error.message : '競合のSupabase保存に失敗しました。'
         setSyncError(message)
       })
@@ -653,8 +665,8 @@ function App() {
     )
     setSelectedConflictId(null)
 
-    if (isSupabaseConfigured) {
-      void resolveConflictInSupabase(conflictId).catch((error) => {
+    if (isSupabaseConfigured && activeUserId) {
+      void resolveConflictInSupabase(conflictId, activeUserId).catch((error) => {
         const message = error instanceof Error ? error.message : '競合解決状態のSupabase保存に失敗しました。'
         setSyncError(message)
       })
@@ -675,8 +687,8 @@ function App() {
     setConflicts(resolvedConflicts)
     setSelectedConflictId(null)
 
-    if (isSupabaseConfigured) {
-      void pushConflictsToSupabase(resolvedConflicts).catch((error) => {
+    if (isSupabaseConfigured && activeUserId) {
+      void pushConflictsToSupabase(resolvedConflicts, activeUserId).catch((error) => {
         const message = error instanceof Error ? error.message : '競合解決状態のSupabase保存に失敗しました。'
         setSyncError(message)
       })
@@ -1225,8 +1237,8 @@ function App() {
 
       setCardHistories((current) => [snapshot, ...current])
 
-      if (isSupabaseConfigured) {
-        void insertCardHistoryToSupabase(snapshot).catch((error) => {
+      if (isSupabaseConfigured && activeUserId) {
+        void insertCardHistoryToSupabase(snapshot, activeUserId).catch((error) => {
           const message = error instanceof Error ? error.message : '編集履歴のSupabase保存に失敗しました。'
           setSyncError(message)
           setSyncState((current) => ({

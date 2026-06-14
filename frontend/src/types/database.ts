@@ -14,6 +14,7 @@ export type Database = {
       cards: {
         Row: {
           id: string
+          user_id: string
           title: string
           body: string
           site: SiteType
@@ -25,6 +26,7 @@ export type Database = {
         }
         Insert: {
           id?: string
+          user_id: string
           title?: string
           body?: string
           site?: SiteType
@@ -36,6 +38,7 @@ export type Database = {
         }
         Update: {
           id?: string
+          user_id?: string
           title?: string
           body?: string
           site?: SiteType
@@ -50,16 +53,19 @@ export type Database = {
       tags: {
         Row: {
           id: string
+          user_id: string
           name: string
           created_at: string
         }
         Insert: {
           id?: string
+          user_id: string
           name: string
           created_at?: string
         }
         Update: {
           id?: string
+          user_id?: string
           name?: string
           created_at?: string
         }
@@ -83,6 +89,7 @@ export type Database = {
       card_histories: {
         Row: {
           id: string
+          user_id: string
           card_id: string
           title: string
           body: string
@@ -90,6 +97,7 @@ export type Database = {
         }
         Insert: {
           id?: string
+          user_id: string
           card_id: string
           title: string
           body: string
@@ -97,6 +105,7 @@ export type Database = {
         }
         Update: {
           id?: string
+          user_id?: string
           card_id?: string
           title?: string
           body?: string
@@ -107,6 +116,7 @@ export type Database = {
       conflicts: {
         Row: {
           id: string
+          user_id: string
           card_id: string
           local_title: string | null
           local_body: string | null
@@ -117,6 +127,7 @@ export type Database = {
         }
         Insert: {
           id?: string
+          user_id: string
           card_id: string
           local_title?: string | null
           local_body?: string | null
@@ -127,6 +138,7 @@ export type Database = {
         }
         Update: {
           id?: string
+          user_id?: string
           card_id?: string
           local_title?: string | null
           local_body?: string | null

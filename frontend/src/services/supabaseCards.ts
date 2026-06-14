@@ -13,7 +13,9 @@ type CardTagRow = Database["public"]["Tables"]["card_tags"]["Row"];
 type CardHistoryRow = Database["public"]["Tables"]["card_histories"]["Row"];
 type ConflictRow = Database["public"]["Tables"]["conflicts"]["Row"];
 
-function toCardRow(card: CardWithTags): CardRow {
+type UserId = string;
+
+function toCardRow(card: CardWithTags, userId: UserId): CardRow {
   return {
     id: card.id,
     title: card.title,
@@ -25,10 +27,11 @@ function toCardRow(card: CardWithTags): CardRow {
     device_id: card.device_id,
     deleted_at:
       card.deleted_at ?? (card.status === "trash" ? card.updated_at : null),
+    user_id: userId,
   };
 }
 
-function toTagRows(cards: CardWithTags[]): TagRow[] {
+function toTagRows(cards: CardWithTags[], userId: UserId): TagRow[] {
   const tagMap = new Map<string, Tag>();
 
   cards.forEach((card) => {
@@ -44,6 +47,7 @@ function toTagRows(cards: CardWithTags[]): TagRow[] {
     id: tag.id,
     name: tag.name,
     created_at: tag.created_at,
+    user_id: userId,
   }));
 }
 
@@ -56,13 +60,14 @@ function toCardTagRows(cards: CardWithTags[]): CardTagRow[] {
   );
 }
 
-function toCardHistoryRow(history: CardHistory): CardHistoryRow {
+function toCardHistoryRow(history: CardHistory, userId: UserId): CardHistoryRow {
   return {
     id: history.id,
     card_id: history.card_id,
     title: history.title,
     body: history.body,
     saved_at: history.saved_at,
+    user_id: userId,
   };
 }
 
@@ -76,7 +81,7 @@ function toCardHistory(row: CardHistoryRow): CardHistory {
   };
 }
 
-function toConflictRow(conflict: Conflict): ConflictRow {
+function toConflictRow(conflict: Conflict, userId: UserId): ConflictRow {
   return {
     id: conflict.id,
     card_id: conflict.card_id,
@@ -86,6 +91,7 @@ function toConflictRow(conflict: Conflict): ConflictRow {
     remote_body: conflict.remote_body,
     created_at: conflict.created_at,
     resolved: conflict.resolved,
+    user_id: userId,
   };
 }
 
@@ -102,7 +108,7 @@ function toConflict(row: ConflictRow): Conflict {
   };
 }
 
-export async function fetchCardsFromSupabase(): Promise<CardWithTags[]> {
+export async function fetchCardsFromSupabase(userId: UserId): Promise<CardWithTags[]> {
   if (!supabase) {
     throw new Error("Supabase URL または anon key が設定されていません。");
   }
@@ -111,8 +117,9 @@ export async function fetchCardsFromSupabase(): Promise<CardWithTags[]> {
     supabase
       .from("cards")
       .select("*")
+      .eq("user_id", userId)
       .order("updated_at", { ascending: false }),
-    supabase.from("tags").select("*"),
+    supabase.from("tags").select("*").eq("user_id", userId),
     supabase.from("card_tags").select("*"),
   ]);
 
@@ -150,7 +157,7 @@ export async function fetchCardsFromSupabase(): Promise<CardWithTags[]> {
   }));
 }
 
-export async function fetchCardHistoriesFromSupabase(): Promise<CardHistory[]> {
+export async function fetchCardHistoriesFromSupabase(userId: UserId): Promise<CardHistory[]> {
   if (!supabase) {
     throw new Error("Supabase URL または anon key が設定されていません。");
   }
@@ -158,6 +165,7 @@ export async function fetchCardHistoriesFromSupabase(): Promise<CardHistory[]> {
   const { data, error } = await supabase
     .from("card_histories")
     .select("*")
+    .eq("user_id", userId)
     .order("saved_at", { ascending: false });
 
   if (error) throw error;
@@ -165,7 +173,7 @@ export async function fetchCardHistoriesFromSupabase(): Promise<CardHistory[]> {
   return (data ?? []).map(toCardHistory);
 }
 
-export async function fetchConflictsFromSupabase(): Promise<Conflict[]> {
+export async function fetchConflictsFromSupabase(userId: UserId): Promise<Conflict[]> {
   if (!supabase) {
     throw new Error("Supabase URL または anon key が設定されていません。");
   }
@@ -173,6 +181,7 @@ export async function fetchConflictsFromSupabase(): Promise<Conflict[]> {
   const { data, error } = await supabase
     .from("conflicts")
     .select("*")
+    .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
   if (error) throw error;
@@ -182,13 +191,14 @@ export async function fetchConflictsFromSupabase(): Promise<Conflict[]> {
 
 export async function pushCardsToSupabase(
   cards: CardWithTags[],
+  userId: UserId,
 ): Promise<void> {
   if (!supabase) {
     throw new Error("Supabase URL または anon key が設定されていません。");
   }
 
-  const cardRows = cards.map(toCardRow);
-  const tagRows = toTagRows(cards);
+  const cardRows = cards.map((card) => toCardRow(card, userId));
+  const tagRows = toTagRows(cards, userId);
   const cardTagRows = toCardTagRows(cards);
 
   if (cardRows.length > 0) {
@@ -224,6 +234,7 @@ export async function pushCardsToSupabase(
 
 export async function pushCardHistoriesToSupabase(
   histories: CardHistory[],
+  userId: UserId,
 ): Promise<void> {
   if (!supabase) {
     throw new Error("Supabase URL または anon key が設定されていません。");
@@ -233,13 +244,14 @@ export async function pushCardHistoriesToSupabase(
 
   const { error } = await supabase
     .from("card_histories")
-    .upsert(histories.map(toCardHistoryRow), { onConflict: "id" });
+    .upsert(histories.map((history) => toCardHistoryRow(history, userId)), { onConflict: "id" });
 
   if (error) throw error;
 }
 
 export async function insertCardHistoryToSupabase(
   history: CardHistory,
+  userId: UserId,
 ): Promise<void> {
   if (!supabase) {
     throw new Error("Supabase URL または anon key が設定されていません。");
@@ -247,13 +259,14 @@ export async function insertCardHistoryToSupabase(
 
   const { error } = await supabase
     .from("card_histories")
-    .upsert(toCardHistoryRow(history), { onConflict: "id" });
+    .upsert(toCardHistoryRow(history, userId), { onConflict: "id" });
 
   if (error) throw error;
 }
 
 export async function pushConflictsToSupabase(
   conflicts: Conflict[],
+  userId: UserId,
 ): Promise<void> {
   if (!supabase) {
     throw new Error("Supabase URL または anon key が設定されていません。");
@@ -263,13 +276,14 @@ export async function pushConflictsToSupabase(
 
   const { error } = await supabase
     .from("conflicts")
-    .upsert(conflicts.map(toConflictRow), { onConflict: "id" });
+    .upsert(conflicts.map((conflict) => toConflictRow(conflict, userId)), { onConflict: "id" });
 
   if (error) throw error;
 }
 
 export async function insertConflictToSupabase(
   conflict: Conflict,
+  userId: UserId,
 ): Promise<void> {
   if (!supabase) {
     throw new Error("Supabase URL または anon key が設定されていません。");
@@ -277,13 +291,14 @@ export async function insertConflictToSupabase(
 
   const { error } = await supabase
     .from("conflicts")
-    .upsert(toConflictRow(conflict), { onConflict: "id" });
+    .upsert(toConflictRow(conflict, userId), { onConflict: "id" });
 
   if (error) throw error;
 }
 
 export async function resolveConflictInSupabase(
   conflictId: string,
+  userId: UserId,
 ): Promise<void> {
   if (!supabase) {
     throw new Error("Supabase URL または anon key が設定されていません。");
@@ -292,7 +307,8 @@ export async function resolveConflictInSupabase(
   const { error } = await supabase
     .from("conflicts")
     .update({ resolved: true })
-    .eq("id", conflictId);
+    .eq("id", conflictId)
+    .eq("user_id", userId);
 
   if (error) throw error;
 }
@@ -301,6 +317,7 @@ type RealtimeStatus = "connecting" | "connected" | "disconnected" | "error";
 
 type CardsRealtimeOptions = {
   deviceId: string;
+  userId: UserId;
   onStatusChange?: (status: RealtimeStatus) => void;
   onRemoteCards: (
     cards: CardWithTags[],
@@ -335,9 +352,9 @@ export function subscribeCardsRealtime(
 
       try {
         const [cards, histories, conflicts] = await Promise.all([
-          fetchCardsFromSupabase(),
-          fetchCardHistoriesFromSupabase(),
-          fetchConflictsFromSupabase(),
+          fetchCardsFromSupabase(options.userId),
+          fetchCardHistoriesFromSupabase(options.userId),
+          fetchConflictsFromSupabase(options.userId),
         ]);
         if (!disposed) {
           options.onRemoteCards(cards, histories, conflicts, eventLabel);
@@ -370,12 +387,12 @@ export function subscribeCardsRealtime(
     .channel("knowledge-hub-realtime")
     .on(
       "postgres_changes",
-      { event: "*", schema: "public", table: "cards" },
+      { event: "*", schema: "public", table: "cards", filter: `user_id=eq.${options.userId}` },
       handlePostgresChange,
     )
     .on(
       "postgres_changes",
-      { event: "*", schema: "public", table: "tags" },
+      { event: "*", schema: "public", table: "tags", filter: `user_id=eq.${options.userId}` },
       () => reloadRemoteCards("TAG_CHANGE"),
     )
     .on(
@@ -385,7 +402,7 @@ export function subscribeCardsRealtime(
     )
     .on(
       "postgres_changes",
-      { event: "*", schema: "public", table: "conflicts" },
+      { event: "*", schema: "public", table: "conflicts", filter: `user_id=eq.${options.userId}` },
       () => reloadRemoteCards("CONFLICT_CHANGE"),
     )
     .subscribe((status) => {
