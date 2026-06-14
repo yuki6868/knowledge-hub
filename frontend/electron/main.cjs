@@ -1,5 +1,5 @@
 const path = require('node:path')
-const { app, BrowserWindow, Menu, globalShortcut, shell } = require('electron')
+const { app, BrowserWindow, Menu, Tray, globalShortcut, shell, nativeImage } = require('electron')
 
 const PRODUCTION_URL = 'https://knowledge-hub-tawny-one.vercel.app'
 const APP_NAME = 'Knowledge Hub'
@@ -7,7 +7,9 @@ const APP_PROTOCOL = 'knowledge-hub'
 
 let mainWindow = null
 let quickMemoWindow = null
+let tray = null
 let pendingDeepLinkUrl = null
+let isQuitting = false
 
 const resolveStartUrl = () => {
   const envUrl = process.env.KNOWLEDGE_HUB_URL
@@ -22,11 +24,39 @@ const getAppIconPath = () => {
   return path.join(__dirname, 'assets', iconName)
 }
 
-const buildQuickMemoUrl = () => {
-  const startUrl = new URL(resolveStartUrl())
-  startUrl.searchParams.set('khQuickMemo', '1')
-  return startUrl.toString()
+const getTrayIcon = () => {
+  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'))
+  if (icon.isEmpty()) return nativeImage.createEmpty()
+
+  const resizedIcon = icon.resize({ width: 18, height: 18 })
+  if (process.platform === 'darwin') {
+    resizedIcon.setTemplateImage(true)
+  }
+  return resizedIcon
 }
+
+const buildAppUrl = (params = {}, pathname = null) => {
+  const appUrl = new URL(resolveStartUrl())
+
+  if (pathname) {
+    appUrl.pathname = pathname.startsWith('/') ? pathname : `/${pathname}`
+  }
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      appUrl.searchParams.set(key, String(value))
+    }
+  })
+  return appUrl.toString()
+}
+
+// クイックメモ小窓はホーム画面の「モーダル」ではなく、専用URLで開く。
+// queryだけだと本番URL/キャッシュ/遷移後の状態で判定が外れることがあるため、
+// pathname と query の両方で Quick Memo を明示する。
+const buildQuickMemoUrl = () => buildAppUrl(
+  { khQuickMemo: '1', khWindow: 'quickMemo' },
+  '/quick-memo',
+)
 
 const isAppProtocolUrl = (url) => url.startsWith(`${APP_PROTOCOL}://`)
 
@@ -55,6 +85,19 @@ const focusMainWindow = () => {
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
   mainWindow.focus()
+}
+
+const openMainWindow = (params = {}) => {
+  const urlToLoad = buildAppUrl(params)
+
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    pendingDeepLinkUrl = null
+    createMainWindow(urlToLoad)
+    return
+  }
+
+  mainWindow.loadURL(urlToLoad)
+  focusMainWindow()
 }
 
 const buildCallbackUrlForWebApp = (deepLinkUrl) => {
@@ -158,7 +201,7 @@ const registerGlobalShortcuts = () => {
   }
 }
 
-const createMainWindow = () => {
+const createMainWindow = (initialUrl = null) => {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 860,
@@ -208,15 +251,66 @@ const createMainWindow = () => {
     }
   })
 
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return
+    event.preventDefault()
+    mainWindow?.hide()
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })
 
-  const urlToLoad = pendingDeepLinkUrl
+  const urlToLoad = initialUrl ?? (pendingDeepLinkUrl
     ? buildCallbackUrlForWebApp(pendingDeepLinkUrl)
-    : resolveStartUrl()
+    : resolveStartUrl())
   pendingDeepLinkUrl = null
   mainWindow.loadURL(urlToLoad)
+}
+
+
+const createTray = () => {
+  if (tray) return
+
+  tray = new Tray(getTrayIcon())
+  tray.setToolTip(APP_NAME)
+
+  const trayMenu = Menu.buildFromTemplate([
+    {
+      label: 'Knowledge Hubを開く',
+      click: () => openMainWindow(),
+    },
+    {
+      label: 'クイックメモ',
+      accelerator: 'CommandOrControl+Shift+Space',
+      click: () => createQuickMemoWindow(),
+    },
+    { type: 'separator' },
+    {
+      label: '最近のカード',
+      click: () => openMainWindow({ khTrayAction: 'recentCards' }),
+    },
+    {
+      label: '今日の記事候補',
+      click: () => openMainWindow({ khTrayAction: 'todayArticleDrafts' }),
+    },
+    { type: 'separator' },
+    {
+      label: '終了',
+      click: () => {
+        isQuitting = true
+        app.quit()
+      },
+    },
+  ])
+
+  tray.setContextMenu(trayMenu)
+
+  // macOSのメニューバー常駐では、アイコンを押しただけでメイン画面を開かない。
+  // クリック時はメニューだけを出し、画面表示は「Knowledge Hubを開く」または各項目のclickに任せる。
+  tray.on('click', () => {
+    tray?.popUpContextMenu(trayMenu)
+  })
 }
 
 const createApplicationMenu = () => {
@@ -294,8 +388,22 @@ if (!gotSingleInstanceLock) {
     app.setName(APP_NAME)
     app.setAsDefaultProtocolClient(APP_PROTOCOL)
     createApplicationMenu()
+    createTray()
     registerGlobalShortcuts()
-    createMainWindow()
+
+    if (app.isPackaged && process.platform === 'darwin') {
+      app.setLoginItemSettings({
+        openAtLogin: true,
+        openAsHidden: true,
+      })
+    }
+
+    // メニューバー常駐アプリとして起動する。
+    // 起動直後に画面を出すと「常駐」ではなく通常アプリ起動になってしまうため、
+    // メイン画面はTrayメニューの「Knowledge Hubを開く」またはDock再アクティブ化で開く。
+    if (!app.isPackaged) {
+      console.log('Knowledge Hub is running as a menu bar app. Use the Tray menu to open a window.')
+    }
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -304,6 +412,10 @@ if (!gotSingleInstanceLock) {
         focusMainWindow()
       }
     })
+  })
+
+  app.on('before-quit', () => {
+    isQuitting = true
   })
 
   app.on('will-quit', () => {

@@ -520,7 +520,36 @@ function toFormState(card: CardWithTags): CardFormState {
 }
 
 function App() {
-  const isElectronQuickMemo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('khQuickMemo') === '1'
+  const initialRoute = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return {
+        pathname: '/',
+        searchParams: new URLSearchParams(),
+      }
+    }
+
+    const searchParams = new URLSearchParams(window.location.search)
+    const hashQueryStart = window.location.hash.indexOf('?')
+
+    if (hashQueryStart >= 0) {
+      const hashSearchParams = new URLSearchParams(window.location.hash.slice(hashQueryStart + 1))
+      hashSearchParams.forEach((value, key) => {
+        if (!searchParams.has(key)) {
+          searchParams.set(key, value)
+        }
+      })
+    }
+
+    return {
+      pathname: window.location.pathname,
+      searchParams,
+    }
+  }, [])
+  const isElectronQuickMemo =
+    initialRoute.pathname === '/quick-memo' ||
+    initialRoute.searchParams.get('khQuickMemo') === '1' ||
+    initialRoute.searchParams.get('khWindow') === 'quickMemo'
+  const trayAction = initialRoute.searchParams.get('khTrayAction')
   const storedKnowledgeCards = useMemo(() => loadStoredKnowledgeCards(), [])
   const [cards, setCards] = useState<CardWithTags[]>(() => storedKnowledgeCards.cards ?? [])
   const [cardHistories, setCardHistories] = useState<CardHistory[]>(() => storedKnowledgeCards.card_histories ?? [])
@@ -1638,6 +1667,24 @@ function App() {
     setIsQuickMemoOpen(true)
   }, [isElectronQuickMemo])
 
+  useEffect(() => {
+    if (trayAction === 'todayArticleDrafts') {
+      setShowArticleStudio(true)
+      setArticleStudioTab('drafts')
+      return
+    }
+
+    if (trayAction === 'recentCards') {
+      setShowArticleStudio(false)
+      setShowTrash(false)
+      setStatusFilter('all')
+      setSiteFilter('all')
+      setTagFilter('all')
+      setSelectedCardId(null)
+      setShowDetail(false)
+    }
+  }, [trayAction])
+
   const saveQuickMemo = async () => {
     const trimmedTitle = quickMemoTitle.trim()
     const trimmedBody = quickMemoBody.trim()
@@ -2393,7 +2440,84 @@ function App() {
   if (isElectronQuickMemo) {
     return (
       <main className="app-shell electron-quick-memo-shell">
-        {quickMemoModal}
+        <section
+          className="quick-memo-dialog quick-memo-standalone"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="quick-memo-title"
+        >
+          <div className="quick-memo-header">
+            <div>
+              <p className="eyebrow">Quick Memo</p>
+              <h2 id="quick-memo-title">クイックメモ</h2>
+              <p>Cmd + Shift + Space から即メモできます。保存するとこの小窓は閉じます。</p>
+            </div>
+            <button className="quick-memo-close" type="button" onClick={closeQuickMemo} aria-label="閉じる">
+              ×
+            </button>
+          </div>
+
+          <label className="quick-memo-field">
+            <span>タイトル（任意）</span>
+            <input
+              value={quickMemoTitle}
+              onChange={(event) => setQuickMemoTitle(event.target.value)}
+              placeholder="空なら本文から自動で作ります"
+              autoFocus
+            />
+          </label>
+
+          <label className="quick-memo-field">
+            <span>本文</span>
+            <textarea
+              value={quickMemoBody}
+              onChange={(event) => setQuickMemoBody(event.target.value)}
+              onKeyDown={handleQuickMemoKeyDown}
+              placeholder="思いついたことをそのまま書く。Cmd/Ctrl + Enter で保存。"
+              rows={9}
+            />
+          </label>
+
+          <div className="quick-memo-mobile-grid">
+            <label className="quick-memo-field">
+              <span>サイト</span>
+              <select value={quickMemoSite} onChange={(event) => setQuickMemoSite(event.target.value as SiteType)}>
+                {SITE_TYPES.map((site) => (
+                  <option key={site} value={site}>
+                    {SITE_TYPE_LABELS[site]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="quick-memo-field">
+              <span>タグ（任意・カンマ区切り）</span>
+              <input
+                value={quickMemoTagsText}
+                onChange={(event) => setQuickMemoTagsText(event.target.value)}
+                placeholder="例: agile, note"
+              />
+            </label>
+          </div>
+
+          <div className="quick-memo-info">
+            <span>保存先</span>
+            <strong>status: inbox / site: {SITE_TYPE_LABELS[quickMemoSite]} / tags: {parseTags(quickMemoTagsText).length}件</strong>
+          </div>
+
+          <div className="quick-memo-actions">
+            <button className="ghost-button" type="button" onClick={closeQuickMemo}>
+              キャンセル
+            </button>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => void saveQuickMemo()}
+              disabled={!quickMemoTitle.trim() && !quickMemoBody.trim()}
+            >
+              inboxへ保存
+            </button>
+          </div>
+        </section>
       </main>
     )
   }
