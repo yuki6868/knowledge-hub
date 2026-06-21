@@ -490,6 +490,7 @@ function buildRemoteConflicts(
   localCards: CardWithTags[],
   remoteCards: CardWithTags[],
   existingConflicts: Conflict[],
+  deviceId: string,
 ): Conflict[] {
   const localById = new Map(localCards.map((card) => [card.id, card]))
   const unresolvedConflictCardIds = new Set(
@@ -501,6 +502,7 @@ function buildRemoteConflicts(
     const localCard = localById.get(remoteCard.id)
     if (!localCard) return []
     if (unresolvedConflictCardIds.has(remoteCard.id)) return []
+    if (remoteCard.device_id && remoteCard.device_id === deviceId) return []
 
     const hasContentDiff = localCard.title !== remoteCard.title || localCard.body !== remoteCard.body
     const hasMetaDiff = localCard.site !== remoteCard.site || localCard.status !== remoteCard.status
@@ -529,8 +531,9 @@ function hasTag(card: CardWithTags, tagName: string): boolean {
   return card.tags.some((tag) => tag.name === tagName)
 }
 
-function parseTags(tagsText: string): Tag[] {
+function parseTags(tagsText: string, existingTags: Tag[] = []): Tag[] {
   const now = new Date().toISOString()
+  const existingTagsByName = new Map(existingTags.map((tag) => [normalizeTagName(tag.name), tag]))
 
   return Array.from(
     new Set(
@@ -540,11 +543,16 @@ function parseTags(tagsText: string): Tag[] {
         .filter(Boolean)
         .sort(),
     ),
-  ).map((name) => ({
-    id: createId('tag'),
-    name,
-    created_at: now,
-  }))
+  ).map((name) => {
+    const existingTag = existingTagsByName.get(name)
+    return existingTag
+      ? { ...existingTag, name }
+      : {
+          id: createId('tag'),
+          name,
+          created_at: now,
+        }
+  })
 }
 
 function toFormState(card: CardWithTags): CardFormState {
@@ -1010,7 +1018,12 @@ function App() {
         if (currentSyncState.pendingCount > 0) {
           const localCards = cardsRef.current
           const currentConflicts = conflictsRef.current
-          const generatedConflicts = buildRemoteConflicts(localCards, remoteCards, mergeConflicts(currentConflicts, remoteConflicts))
+          const generatedConflicts = buildRemoteConflicts(
+            localCards,
+            remoteCards,
+            mergeConflicts(currentConflicts, remoteConflicts),
+            currentSyncState.deviceId,
+          )
           const nextConflicts = mergeConflicts(generatedConflicts, currentConflicts, remoteConflicts)
           setConflicts(nextConflicts)
           setCardHistories(remoteHistories)
@@ -2064,7 +2077,7 @@ function App() {
   const saveCard = () => {
     const now = new Date().toISOString()
     const normalizedTitle = form.title.trim() || '無題のカード'
-    const nextTags = parseTags(form.tagsText)
+    const nextTags = parseTags(form.tagsText, selectedCard?.tags ?? [])
 
     if (editorMode === 'new') {
       const newCard: CardWithTags = {

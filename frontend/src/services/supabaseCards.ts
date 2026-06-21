@@ -31,19 +31,26 @@ function toCardRow(card: CardWithTags, userId: UserId): CardRow {
   };
 }
 
-function toTagRows(cards: CardWithTags[], userId: UserId): TagRow[] {
+function buildCanonicalTagMap(cards: CardWithTags[]): Map<string, Tag> {
   const tagMap = new Map<string, Tag>();
 
   cards.forEach((card) => {
     card.tags.forEach((tag) => {
-      const current = tagMap.get(tag.name);
+      const name = tag.name.trim().toLowerCase();
+      if (!name) return;
+
+      const current = tagMap.get(name);
       if (!current || tag.created_at < current.created_at) {
-        tagMap.set(tag.name, tag);
+        tagMap.set(name, { ...tag, name });
       }
     });
   });
 
-  return Array.from(tagMap.values()).map((tag) => ({
+  return tagMap;
+}
+
+function toTagRows(canonicalTags: Map<string, Tag>, userId: UserId): TagRow[] {
+  return Array.from(canonicalTags.values()).map((tag) => ({
     id: tag.id,
     name: tag.name,
     created_at: tag.created_at,
@@ -51,13 +58,20 @@ function toTagRows(cards: CardWithTags[], userId: UserId): TagRow[] {
   }));
 }
 
-function toCardTagRows(cards: CardWithTags[]): CardTagRow[] {
-  return cards.flatMap((card) =>
-    card.tags.map((tag) => ({
+function toCardTagRows(cards: CardWithTags[], canonicalTags: Map<string, Tag>): CardTagRow[] {
+  return cards.flatMap((card) => {
+    const tagIds = new Set<string>();
+
+    card.tags.forEach((tag) => {
+      const canonicalTag = canonicalTags.get(tag.name.trim().toLowerCase());
+      if (canonicalTag) tagIds.add(canonicalTag.id);
+    });
+
+    return Array.from(tagIds).map((tagId) => ({
       card_id: card.id,
-      tag_id: tag.id,
-    })),
-  );
+      tag_id: tagId,
+    }));
+  });
 }
 
 function toCardHistoryRow(history: CardHistory, userId: UserId): CardHistoryRow {
@@ -113,18 +127,23 @@ export async function fetchCardsFromSupabase(userId: UserId): Promise<CardWithTa
     throw new Error("Supabase URL または anon key が設定されていません。");
   }
 
-  const [cardsResult, tagsResult, cardTagsResult] = await Promise.all([
+  const [cardsResult, tagsResult] = await Promise.all([
     supabase
       .from("cards")
       .select("*")
       .eq("user_id", userId)
       .order("updated_at", { ascending: false }),
     supabase.from("tags").select("*").eq("user_id", userId),
-    supabase.from("card_tags").select("*"),
   ]);
 
   if (cardsResult.error) throw cardsResult.error;
   if (tagsResult.error) throw tagsResult.error;
+
+  const cardIds = (cardsResult.data ?? []).map((card) => card.id);
+  const cardTagsResult = cardIds.length > 0
+    ? await supabase.from("card_tags").select("*").in("card_id", cardIds)
+    : { data: [], error: null };
+
   if (cardTagsResult.error) throw cardTagsResult.error;
 
   const tagsById = new Map((tagsResult.data ?? []).map((tag) => [tag.id, tag]));
@@ -198,8 +217,9 @@ export async function pushCardsToSupabase(
   }
 
   const cardRows = cards.map((card) => toCardRow(card, userId));
-  const tagRows = toTagRows(cards, userId);
-  const cardTagRows = toCardTagRows(cards);
+  const canonicalTags = buildCanonicalTagMap(cards);
+  const tagRows = toTagRows(canonicalTags, userId);
+  const cardTagRows = toCardTagRows(cards, canonicalTags);
 
   if (cardRows.length > 0) {
     const { error } = await supabase
@@ -417,7 +437,7 @@ export function subscribeCardsRealtime(
         options.onStatusChange?.("error");
         options.onError?.(message);
       }
-    }, 450);
+    }, 900);
   };
 
   const handlePostgresChange = (payload: {
